@@ -222,6 +222,7 @@ $leadRate = $pairCount > 0 ? ($improvedWins / $pairCount) * 100 : 0.0;
 $topImprovedPair = $topImprovedRow
     ? (($topImprovedRow['drug_id'] ?? '') . ' / ' . ($topImprovedRow['disease_id'] ?? ''))
     : 'Chưa có dữ liệu';
+$compareGraphData = $resultData['graph3d'] ?? ($resultData['graph2d'] ?? ['nodes' => [], 'links' => []]);
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -583,7 +584,25 @@ $topImprovedPair = $topImprovedRow
                         <p class="muted">Cột trái: thuốc · cột phải: bệnh · cạnh: kết quả của mô hình cải tiến.</p>
                     </div>
                 </div>
-                <?= render_compare_graph($resultData['graph2d'] ?? []) ?>
+                <div class="graph-note">Thuá»‘c mÃ u xanh, protein mÃ u vÃ ng, bá»‡nh mÃ u Ä‘á». KÃ©o chuá»™t Ä‘á»ƒ xoay, lÄƒn chuá»™t Ä‘á»ƒ phÃ³ng to/thu nhá».</div>
+                <div class="graph-legend spacer-md">
+                    <span class="legend-item"><span class="legend-dot legend-dot-drug"></span>Thuá»‘c</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot-protein"></span>Protein</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot-disease"></span>Bá»‡nh</span>
+                </div>
+                <div class="compare-graph-copy">
+                    <div class="graph-note">Thuoc mau xanh, protein mau vang, benh mau do. Keo chuot de xoay, lan chuot de phong to/thu nho.</div>
+                    <div class="graph-legend spacer-md">
+                        <span class="legend-item"><span class="legend-dot legend-dot-drug"></span>Thuoc</span>
+                        <span class="legend-item"><span class="legend-dot legend-dot-protein"></span>Protein</span>
+                        <span class="legend-item"><span class="legend-dot legend-dot-disease"></span>Benh</span>
+                    </div>
+                </div>
+                <div class="compare-graph-shell">
+                    <div id="graph3d" class="compare-graph-viewport" role="img" aria-label="SÆ¡ Ä‘á»“ liÃªn káº¿t 3D thuá»‘c protein bá»‡nh"></div>
+                    <div id="graph3dTooltip" class="graph-tooltip"></div>
+                    <div id="graph3dFallback" class="chart-fallback graph3d-fallback">KhÃ´ng táº£i Ä‘Æ°á»£c Ä‘á»“ thá»‹ 3D. Vui lÃ²ng kiá»ƒm tra káº¿t ná»‘i máº¡ng hoáº·c reload trang.</div>
+                </div>
             </div>
         </div>
     <?php else: ?>
@@ -685,6 +704,308 @@ $topImprovedPair = $topImprovedRow
     </script>
 <?php endif; ?>
 
+<?php if ($resultData): ?>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+    const compareGraphData = <?= json_encode($compareGraphData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const graphRoot = document.getElementById('graph3d');
+    const graphTooltip = document.getElementById('graph3dTooltip');
+    const graphFallback = document.getElementById('graph3dFallback');
+    const graphCard = graphRoot?.closest('.glass-card');
+
+    if (graphCard) {
+        const headerTitle = graphCard.querySelector('.section-header h3');
+        const headerDesc = graphCard.querySelector('.section-header p');
+        if (headerTitle) headerTitle.textContent = 'Do thi lien ket 3D';
+        if (headerDesc) headerDesc.textContent = 'Xoay, zoom va quan sat lien ket thuoc - protein - benh trong khong gian 3 chieu.';
+    }
+
+    if (graphRoot) {
+        graphRoot.setAttribute('aria-label', 'Do thi lien ket 3D thuoc protein benh');
+    }
+
+    const showGraphFallback = (message) => {
+        if (!graphFallback) return;
+        graphFallback.textContent = message;
+        graphFallback.style.display = 'grid';
+    };
+
+    if (!graphRoot) {
+        // no-op
+    } else if (!compareGraphData || !Array.isArray(compareGraphData.nodes) || !compareGraphData.nodes.length) {
+        showGraphFallback('Chua co du lieu do thi 3D cho lan chay nay.');
+    } else {
+        Promise.all([
+            import('three'),
+            import('three/addons/controls/OrbitControls.js'),
+        ]).then(([THREE, threeAddons]) => {
+            const { OrbitControls } = threeAddons;
+            const palette = {
+                drug: 0x3b82f6,
+                disease: 0xef4444,
+                protein: 0xf59e0b,
+            };
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            graphRoot.innerHTML = '';
+            graphRoot.appendChild(renderer.domElement);
+
+            const scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x0b0f18, 0.00125);
+
+            const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 2400);
+            camera.position.set(0, 90, 500);
+
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.minDistance = 180;
+            controls.maxDistance = 820;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.55;
+            controls.target.set(0, 0, 0);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.82));
+            const keyLight = new THREE.DirectionalLight(0xdbeafe, 1.25);
+            keyLight.position.set(-180, 220, 260);
+            scene.add(keyLight);
+            const fillLight = new THREE.PointLight(0xf59e0b, 1.0, 900);
+            fillLight.position.set(0, 60, 160);
+            scene.add(fillLight);
+            const rimLight = new THREE.PointLight(0xef4444, 0.75, 900);
+            rimLight.position.set(180, -80, -140);
+            scene.add(rimLight);
+
+            const groupedNodes = { drug: [], protein: [], disease: [] };
+            compareGraphData.nodes.forEach((node) => {
+                const bucket = groupedNodes[node.type] ? node.type : 'protein';
+                groupedNodes[bucket].push(node);
+            });
+
+            const positions = new Map();
+            const assignColumn = (nodes, x) => {
+                const total = nodes.length;
+                const yStep = total > 1 ? Math.min(110, 300 / Math.max(total - 1, 1)) : 0;
+                nodes.forEach((node, index) => {
+                    const y = total > 1 ? (((total - 1) / 2) - index) * yStep : 0;
+                    const z = total > 1 ? (index % 2 === 0 ? -1 : 1) * (24 + Math.floor(index / 2) * 22) : 0;
+                    positions.set(node.id, new THREE.Vector3(x, y, z));
+                });
+            };
+
+            assignColumn(groupedNodes.drug, -185);
+            assignColumn(groupedNodes.disease, 185);
+
+            const proteinNodes = groupedNodes.protein;
+            const proteinCount = proteinNodes.length;
+            proteinNodes.forEach((node, index) => {
+                const angle = proteinCount > 0 ? (index / proteinCount) * Math.PI * 2 : 0;
+                const radius = Math.max(72, Math.min(132, 84 + proteinCount * 4));
+                const y = proteinCount > 1 ? (((proteinCount - 1) / 2) - index) * Math.min(34, 220 / Math.max(proteinCount - 1, 1)) : 0;
+                const x = Math.cos(angle) * radius * 0.38;
+                const z = Math.sin(angle) * radius;
+                positions.set(node.id, new THREE.Vector3(x, y, z));
+            });
+
+            const roundRect = (ctx, x, y, w, h, r) => {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+            };
+
+            const makeLabelSprite = (title, subtitle, accentHex) => {
+                const safeTitle = String(title || '').slice(0, 28);
+                const safeSubtitle = String(subtitle || '').slice(0, 28);
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const ratio = 2;
+                ctx.font = '700 24px Inter, sans-serif';
+                const titleWidth = ctx.measureText(safeTitle).width;
+                ctx.font = '600 13px "IBM Plex Mono", monospace';
+                const subtitleWidth = ctx.measureText(safeSubtitle).width;
+                const width = Math.ceil((Math.max(titleWidth, subtitleWidth) + 36) * ratio);
+                const height = Math.ceil(58 * ratio);
+                canvas.width = width;
+                canvas.height = height;
+                ctx.scale(ratio, ratio);
+                roundRect(ctx, 0, 0, width / ratio, height / ratio, 11);
+                ctx.fillStyle = 'rgba(10, 12, 18, 0.90)';
+                ctx.fill();
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+                ctx.stroke();
+                ctx.fillStyle = '#f8fafc';
+                ctx.font = '700 16px Inter, sans-serif';
+                ctx.fillText(safeTitle, 18, 24);
+                ctx.fillStyle = `#${accentHex.toString(16).padStart(6, '0')}`;
+                ctx.font = '600 11px "IBM Plex Mono", monospace';
+                ctx.fillText(safeSubtitle, 18, 42);
+
+                const texture = new THREE.CanvasTexture(canvas);
+                texture.needsUpdate = true;
+                texture.minFilter = THREE.LinearFilter;
+                const material = new THREE.SpriteMaterial({
+                    map: texture,
+                    transparent: true,
+                    depthWrite: false,
+                });
+                const sprite = new THREE.Sprite(material);
+                sprite.scale.set((width / ratio) * 0.64, (height / ratio) * 0.64, 1);
+                return sprite;
+            };
+
+            const nodeMeshes = [];
+            const solidSphere = new THREE.SphereGeometry(7.5, 28, 28);
+            const proteinSphere = new THREE.SphereGeometry(6.2, 22, 22);
+
+            compareGraphData.nodes.forEach((node) => {
+                const nodeColor = palette[node.type] || 0xffffff;
+                const position = positions.get(node.id) || new THREE.Vector3();
+                const mesh = new THREE.Mesh(
+                    node.type === 'protein' ? proteinSphere : solidSphere,
+                    new THREE.MeshStandardMaterial({
+                        color: nodeColor,
+                        emissive: nodeColor,
+                        emissiveIntensity: node.type === 'protein' ? 0.20 : 0.14,
+                        roughness: 0.28,
+                        metalness: 0.18,
+                    }),
+                );
+                mesh.position.copy(position);
+                mesh.userData = node;
+                scene.add(mesh);
+                nodeMeshes.push(mesh);
+
+                const glow = new THREE.Mesh(
+                    new THREE.SphereGeometry(node.type === 'protein' ? 9.4 : 11.6, 18, 18),
+                    new THREE.MeshBasicMaterial({
+                        color: nodeColor,
+                        transparent: true,
+                        opacity: node.type === 'protein' ? 0.08 : 0.06,
+                    }),
+                );
+                glow.position.copy(position);
+                scene.add(glow);
+
+                if (node.type !== 'protein') {
+                    const label = makeLabelSprite(node.label || node.actual_id || node.id, node.actual_id || '', nodeColor);
+                    label.position.set(
+                        position.x + (node.type === 'drug' ? -64 : 64),
+                        position.y + 16,
+                        position.z,
+                    );
+                    scene.add(label);
+                }
+            });
+
+            compareGraphData.links.forEach((edge) => {
+                const start = positions.get(edge.source);
+                const end = positions.get(edge.target);
+                if (!start || !end) return;
+
+                let edgeColor = 0x94a3b8;
+                let edgeOpacity = 0.34;
+                let points = [start, end];
+
+                if (edge.kind === 'drug-protein') {
+                    edgeColor = 0x60a5fa;
+                    edgeOpacity = 0.30;
+                } else if (edge.kind === 'protein-disease') {
+                    edgeColor = 0xf59e0b;
+                    edgeOpacity = 0.28;
+                } else if (edge.kind === 'prediction') {
+                    edgeColor = Number(edge.delta || 0) >= 0 ? 0x22c55e : 0xf59e0b;
+                    edgeOpacity = 0.62;
+                    const mid = start.clone().lerp(end, 0.5);
+                    mid.y += 20;
+                    mid.z += 44;
+                    points = new THREE.CatmullRomCurve3([start, mid, end]).getPoints(28);
+                }
+
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({
+                    color: edgeColor,
+                    transparent: true,
+                    opacity: edgeOpacity,
+                });
+                const line = new THREE.Line(geometry, material);
+                scene.add(line);
+            });
+
+            const raycaster = new THREE.Raycaster();
+            const pointer = new THREE.Vector2();
+            const escapeHtml = (value) => String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+            const hideTooltip = () => {
+                if (graphTooltip) graphTooltip.classList.remove('show');
+            };
+
+            renderer.domElement.addEventListener('pointermove', (event) => {
+                if (!graphTooltip) return;
+                const rect = graphRoot.getBoundingClientRect();
+                pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                raycaster.setFromCamera(pointer, camera);
+                const hits = raycaster.intersectObjects(nodeMeshes, false);
+                if (!hits.length) {
+                    hideTooltip();
+                    return;
+                }
+                const node = hits[0].object.userData || {};
+                graphTooltip.innerHTML = `<strong>${escapeHtml(node.label || node.actual_id || node.id || '')}</strong><span>${escapeHtml(String(node.type || '').toUpperCase())} · ${escapeHtml(node.actual_id || '')}</span>`;
+                graphTooltip.style.left = `${event.clientX - rect.left}px`;
+                graphTooltip.style.top = `${event.clientY - rect.top}px`;
+                graphTooltip.classList.add('show');
+            });
+
+            renderer.domElement.addEventListener('pointerleave', hideTooltip);
+
+            const resize = () => {
+                const width = Math.max(graphRoot.clientWidth, 1);
+                const height = Math.max(graphRoot.clientHeight, 1);
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height, false);
+            };
+
+            resize();
+            if (typeof ResizeObserver !== 'undefined') {
+                const observer = new ResizeObserver(resize);
+                observer.observe(graphRoot);
+            } else {
+                window.addEventListener('resize', resize);
+            }
+
+            const animate = () => {
+                controls.update();
+                renderer.render(scene, camera);
+                window.requestAnimationFrame(animate);
+            };
+            animate();
+        }).catch(() => {
+            showGraphFallback('Khong tai duoc thu vien 3D. Vui long kiem tra ket noi mang hoac reload trang.');
+        });
+    }
+    </script>
+<?php endif; ?>
+
 <script>
 (() => {
     const API = <?= json_encode(rtrim((string) config('python_api.base_url'), '/'), JSON_UNESCAPED_SLASHES) ?>;
@@ -713,8 +1034,9 @@ $topImprovedPair = $topImprovedRow
             const dis = !sel && s.selected.size >= MAX;
             return `<div class="entity-picker-item${sel ? ' ep-selected' : ''}${dis ? ' ep-disabled' : ''}" data-id="${esc(i.id)}">` +
                 `<input type="checkbox"${sel ? ' checked' : ''}${dis ? ' disabled' : ''}>` +
-                `<span class="entity-picker-item-name">${esc(i.name)}</span>` +
-                `<span class="entity-picker-id">${esc(i.id)}</span></div>`;
+                `<span class="entity-picker-item-name" title="${esc(i.name)}">${esc(i.name)}</span>` +
+                `<span class="entity-picker-id" title="${esc(i.id)}">${esc(i.id)}</span>` +
+                `</div>`;
         }).join('') + `<div class="entity-picker-count">Đã chọn ${s.selected.size}/${MAX}</div>`;
 
         listEl.querySelectorAll('.entity-picker-item').forEach(el => {

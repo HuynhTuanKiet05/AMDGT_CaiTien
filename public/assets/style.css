@@ -263,6 +263,7 @@ p { color: inherit; }
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
 }
 
 .label {
@@ -372,7 +373,7 @@ textarea.input:focus {
 
 .diagnosis-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(290px, 0.85fr);
+    grid-template-columns: minmax(0, 1.62fr) minmax(270px, 0.78fr);
     gap: 22px;
     align-items: start;
 }
@@ -384,6 +385,7 @@ textarea.input:focus {
 .diagnosis-aside {
     display: grid;
     gap: 18px;
+    min-width: 0;
 }
 
 .diagnosis-panel {
@@ -767,9 +769,9 @@ textarea.input:focus {
     box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.85);
 }
 
-.legend-dot-drug { background: var(--drug); }
-.legend-dot-disease { background: var(--disease); }
-.legend-dot-protein { background: var(--protein); }
+.legend-dot-drug { background: #3b82f6; }
+.legend-dot-disease { background: #ef4444; }
+.legend-dot-protein { background: #f59e0b; }
 
 .graph-insights {
     display: grid;
@@ -812,9 +814,66 @@ textarea.input:focus {
     line-height: 1.6;
 }
 
+.section-header + .graph-note,
+.section-header + .graph-note + .graph-legend {
+    display: none;
+}
+
+.compare-graph-copy {
+    display: grid;
+}
+
+.compare-graph-shell {
+    position: relative;
+}
+
+.compare-graph-viewport {
+    height: 520px !important;
+}
+
+#graph3d canvas {
+    display: block;
+}
+
+.graph3d-fallback {
+    z-index: 4;
+}
+
+.graph-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 5;
+    min-width: 180px;
+    max-width: 260px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(10, 12, 18, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: 0 18px 30px rgba(0, 0, 0, 0.28);
+    color: #f8fafc;
+    pointer-events: none;
+    transform: translate(14px, 14px);
+}
+
+.graph-tooltip.show {
+    display: grid;
+    gap: 3px;
+}
+
+.graph-tooltip strong {
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.graph-tooltip span {
+    color: #aeb7c8;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+}
+
 .compare-form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.12fr);
     gap: 20px;
     align-items: stretch;
 }
@@ -1132,6 +1191,8 @@ textarea.input:focus {
     border-radius: 16px;
     background: #fffdfa;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .entity-picker:focus-within {
@@ -1196,6 +1257,7 @@ textarea.input:focus {
     max-height: 220px;
     overflow-y: auto;
     border-top: 1px solid var(--border);
+    min-width: 0;
 }
 
 .entity-picker-item {
@@ -1207,6 +1269,8 @@ textarea.input:focus {
     transition: background 0.12s;
     font-size: 13px;
     user-select: none;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .entity-picker-item:hover { background: #eef4ff; }
@@ -1219,7 +1283,22 @@ textarea.input:focus {
     color: var(--text-faint);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
-    flex-shrink: 0;
+    flex: 0 1 130px;
+    min-width: 0;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+#disease-picker .entity-picker-item {
+    gap: 12px;
+}
+
+#disease-picker .entity-picker-id {
+    flex-basis: 160px;
+    max-width: 160px;
 }
 
 .entity-picker-msg {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -35,9 +36,13 @@ app = FastAPI(title='HGT Drug-Disease Prediction API', version='2.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+import traceback
+from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
-    tb = _traceback.format_exc()
+    tb = traceback.format_exc()
     print(f"[ERROR] Unhandled on {request.url.path}:\n{tb}")
     return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
 
@@ -173,50 +178,115 @@ class InferenceManager:
             return list(csv.DictReader(handle))
 
     @staticmethod
-    def load_node_ids(data_dir: Path) -> List[str]:
+    def load_node_entries(data_dir: Path) -> List[Dict[str, str]]:
         for filename in ('AllNode.csv', 'Allnode.csv'):
             path = data_dir / filename
             if not path.exists():
                 continue
             frame = pd.read_csv(path, header=None)
-            values = frame.iloc[:, -1].astype(str).str.strip()
-            return [value for value in values if value and value.lower() not in {'id', 'nan'}]
+            if frame.empty:
+                continue
+
+            if frame.shape[1] == 1:
+                node_ids = frame.iloc[:, 0].astype(str).str.strip()
+                labels = node_ids
+            else:
+                node_ids = frame.iloc[:, 0].astype(str).str.strip()
+                labels = frame.iloc[:, -1].astype(str).str.strip()
+
+            entries: List[Dict[str, str]] = []
+            for node_id, label in zip(node_ids, labels):
+                if not label or label.lower() in {'id', 'nan'}:
+                    continue
+                if not node_id or node_id.lower() in {'id', 'nan'}:
+                    node_id = label
+                entries.append({'node_id': node_id, 'label': label})
+            return entries
         return []
 
-    def load_drug_info(self, data_dir: Path, fallback_count: int) -> List[Dict[str, str]]:
+    @staticmethod
+    def load_node_ids(data_dir: Path) -> List[str]:
+        return [entry['label'] for entry in InferenceManager.load_node_entries(data_dir)]
+
+    @staticmethod
+    def looks_like_compact_id(value: str) -> bool:
+        return bool(re.fullmatch(r'[A-Za-z]{0,5}\d[\w-]*', value.strip()))
+
+    def load_drug_info(self, data_dir: Path, count: int) -> List[Dict[str, str]]:
+        node_entries = self.load_node_entries(data_dir)
+        # If count is 0, we try to get all drugs from node_ids based on common patterns
+        # or just use the whole list if it looks like only drugs.
+        # But usually count is provided by the caller who knows the feature matrix shape.
+        drug_nodes = node_entries[:count] if count > 0 else node_entries
+
+        info_map = {}
         rows = self.load_csv(data_dir / 'DrugInformation.csv')
-        if rows:
-            return [
-                {
-                    'id': str(row.get('id') or row.get('drug_id') or index),
-                    'name': str(row.get('name') or row.get('drug_name') or row.get('id') or index),
+        for row in rows:
+            # We index by name and ID (lowercased) to maximize match chances
+            name = (row.get('name') or row.get('drug_name') or '').lower().strip()
+            drug_id = str(row.get('id') or row.get('drug_id') or '').lower().strip()
+            if name:
+                info_map[name] = row
+            if drug_id:
+                info_map[drug_id] = row
+
+        results = []
+        for entry in drug_nodes:
+            node = entry['label']
+            node_lower = node.lower().strip()
+            row = info_map.get(node_lower)
+            if row:
+                results.append({
+                    'id': str(row.get('id') or row.get('drug_id') or node),
+                    'name': str(row.get('name') or row.get('drug_name') or node),
                     'smiles': str(row.get('smiles') or ''),
-                }
-                for index, row in enumerate(rows)
-            ]
-        return [{'id': f'DRUG_{index}', 'name': f'DRUG_{index}'} for index in range(fallback_count)]
+                })
+            else:
+                results.append({'id': node, 'name': node, 'smiles': ''})
+        return results
 
     def load_disease_info(self, data_dir: Path, drug_count: int, disease_count: int) -> List[Dict[str, str]]:
-        rows = self.load_csv(data_dir / 'DiseaseInformation.csv')
-        if rows:
-            return [
-                {
-                    'id': str(row.get('id') or row.get('disease_id') or index),
-                    'name': str(row.get('name') or row.get('disease_name') or row.get('id') or index),
-                }
-                for index, row in enumerate(rows)
-            ]
+        node_entries = self.load_node_entries(data_dir)
+        disease_nodes = node_entries[drug_count:drug_count + disease_count] if disease_count > 0 else node_entries[drug_count:]
 
-        node_ids = self.load_node_ids(data_dir)
-        disease_ids = node_ids[drug_count:drug_count + disease_count]
-        if len(disease_ids) < disease_count:
-            disease_ids.extend(f'DISEASE_{index}' for index in range(len(disease_ids), disease_count))
-        return [{'id': disease_id, 'name': disease_id} for disease_id in disease_ids[:disease_count]]
+        info_map = {}
+        rows = self.load_csv(data_dir / 'DiseaseInformation.csv')
+        for row in rows:
+            name = (row.get('name') or row.get('disease_name') or '').lower().strip()
+            disease_id = str(row.get('id') or row.get('disease_id') or '').lower().strip()
+            if name:
+                info_map[name] = row
+            if disease_id:
+                info_map[disease_id] = row
+
+        results = []
+        for entry in disease_nodes:
+            node_id = entry['node_id']
+            node_label = entry['label']
+            node_lower = node_label.lower().strip()
+            row = info_map.get(node_lower)
+            if row:
+                row_id = str(row.get('id') or row.get('disease_id') or '').strip()
+                row_name = str(row.get('name') or row.get('disease_name') or node_label).strip()
+                resolved_id = row_id
+                if not resolved_id:
+                    resolved_id = node_label if self.looks_like_compact_id(node_label) else node_id
+                elif resolved_id.lower() == row_name.lower() and not self.looks_like_compact_id(resolved_id):
+                    resolved_id = node_id or resolved_id
+                results.append({
+                    'id': resolved_id,
+                    'name': row_name,
+                })
+            else:
+                fallback_id = node_label if self.looks_like_compact_id(node_label) else node_id
+                results.append({'id': fallback_id or node_label, 'name': node_label})
+        return results
 
     def load_protein_info(self, data_dir: Path, protein_count: int) -> List[Dict[str, str]]:
         rows = self.load_csv(data_dir / 'ProteinInformation.csv')
+        # Standardize to protein_count if possible
         if rows:
-            return [
+            info_list = [
                 {
                     'id': str(row.get('id') or row.get('protein_id') or index),
                     'name': str(row.get('protein_name') or row.get('name') or row.get('id') or index),
@@ -225,6 +295,10 @@ class InferenceManager:
                 }
                 for index, row in enumerate(rows)
             ]
+            if protein_count > 0:
+                return info_list[:protein_count]
+            return info_list
+        
         return [{'id': f'PROTEIN_{index}', 'name': f'PROTEIN_{index}', 'protein_name': f'PROTEIN_{index}'} for index in range(protein_count)]
 
     @staticmethod
@@ -256,6 +330,15 @@ class InferenceManager:
                     'hgt_head': 8,
                     'hgt_head_dim': 48,
                     'topo_hidden': 192,
+                },
+                'B-dataset': {
+                    'neighbor': 15,
+                    'gt_out_dim': 256,
+                    'hgt_in_dim': 256,
+                    'hgt_layer': 3,
+                    'hgt_head': 8,
+                    'hgt_head_dim': 32,
+                    'topo_hidden': 128,
                 },
             }
             preset = original_presets.get(dataset_name, {
@@ -301,26 +384,34 @@ class InferenceManager:
         return MockArgs(dataset_name, data_dir, preset)
 
     def get_related_proteins(self, ctx: Dict[str, object], source_type: str, source_idx: int, limit: int = 5) -> List[Dict[str, str]]:
+        related = []
+        for protein_idx in self.get_related_protein_indices(ctx, source_type, source_idx, limit):
+            if protein_idx >= len(ctx['protein_info']):
+                continue
+            related.append(ctx['protein_info'][protein_idx])
+        return related
+
+    def get_related_protein_indices(self, ctx: Dict[str, object], source_type: str, source_idx: int, limit: int | None = None) -> List[int]:
         protein_indices: List[int] = []
         if source_type == 'drug':
-            for row in ctx['drpr_edges']:
+            for row in ctx.get('drpr_edges', []):
                 if int(row[0]) == source_idx:
                     protein_indices.append(int(row[1]))
         else:
-            for row in ctx['dipr_edges']:
+            for row in ctx.get('dipr_edges', []):
                 if int(row[0]) == source_idx:
                     protein_indices.append(int(row[1]))
 
         seen = set()
-        related = []
+        unique_indices: List[int] = []
         for protein_idx in protein_indices:
-            if protein_idx in seen or protein_idx >= len(ctx['protein_info']):
+            if protein_idx in seen:
                 continue
             seen.add(protein_idx)
-            related.append(ctx['protein_info'][protein_idx])
-            if len(related) >= limit:
+            unique_indices.append(protein_idx)
+            if limit is not None and len(unique_indices) >= limit:
                 break
-        return related
+        return unique_indices
 
     def load_context(self, dataset_name: str):
         if dataset_name in self.cached_data:
@@ -481,6 +572,8 @@ class InferenceManager:
             'drugs_info': drugs_info,
             'disease_info': disease_info,
             'protein_info': protein_info,
+            'drpr_edges': data['drpr'],
+            'dipr_edges': data['dipr'],
         }
         self.cached_data[cache_key] = context
         return context
@@ -754,34 +847,126 @@ async def compare_predict(payload: ComparePredictRequest):
             pair_offset += 1
 
     comparison.sort(key=lambda item: float(item['improved_score']), reverse=True)
-    graph_links = []
-    for row in comparison[:min(max(payload.top_k, 1), 20)]:
-        graph_links.append({
-            'source': f"drug:{row['drug_id']}",
-            'target': f"disease:{row['disease_id']}",
-            'original_score': row['original_score'],
-            'improved_score': row['improved_score'],
-            'delta': row['delta'],
-            'winner': row['winner'],
-        })
 
-    graph_nodes = [
-        {
+    graph_node_map: Dict[str, Dict[str, str]] = {}
+    for drug in selected_drugs:
+        graph_node_map[f"drug:{drug['id']}"] = {
             'id': f"drug:{drug['id']}",
             'actual_id': drug['id'],
             'label': drug.get('name', drug['id']),
             'type': 'drug',
         }
-        for drug in selected_drugs
-    ] + [
-        {
+    for disease in selected_diseases:
+        graph_node_map[f"disease:{disease['id']}"] = {
             'id': f"disease:{disease['id']}",
             'actual_id': disease['id'],
             'label': disease.get('name', disease['id']),
             'type': 'disease',
         }
-        for disease in selected_diseases
+
+    drug_proteins: Dict[str, List[int]] = {}
+    disease_proteins: Dict[str, List[int]] = {}
+    protein_scores: Dict[int, Dict[str, int]] = {}
+
+    for drug, drug_idx in zip(selected_drugs, drug_indices):
+        related_indices = manager.get_related_protein_indices(ctx, 'drug', drug_idx, limit=None)
+        drug_proteins[drug['id']] = related_indices
+        for protein_idx in related_indices:
+            if protein_idx >= len(ctx['protein_info']):
+                continue
+            score = protein_scores.setdefault(protein_idx, {'drug_hits': 0, 'disease_hits': 0, 'total_hits': 0})
+            score['drug_hits'] += 1
+            score['total_hits'] += 1
+
+    for disease, disease_idx in zip(selected_diseases, disease_indices):
+        related_indices = manager.get_related_protein_indices(ctx, 'disease', disease_idx, limit=None)
+        disease_proteins[disease['id']] = related_indices
+        for protein_idx in related_indices:
+            if protein_idx >= len(ctx['protein_info']):
+                continue
+            score = protein_scores.setdefault(protein_idx, {'drug_hits': 0, 'disease_hits': 0, 'total_hits': 0})
+            score['disease_hits'] += 1
+            score['total_hits'] += 1
+
+    ranked_protein_indices = sorted(
+        protein_scores.keys(),
+        key=lambda protein_idx: (
+            1 if protein_scores[protein_idx]['drug_hits'] > 0 and protein_scores[protein_idx]['disease_hits'] > 0 else 0,
+            protein_scores[protein_idx]['total_hits'],
+            protein_scores[protein_idx]['drug_hits'] + protein_scores[protein_idx]['disease_hits'],
+            -protein_idx,
+        ),
+        reverse=True,
+    )
+    shared_protein_indices = [
+        protein_idx
+        for protein_idx in ranked_protein_indices
+        if protein_scores[protein_idx]['drug_hits'] > 0 and protein_scores[protein_idx]['disease_hits'] > 0
     ]
+    selected_protein_indices = (shared_protein_indices or ranked_protein_indices)[:12]
+    selected_protein_index_set = set(selected_protein_indices)
+    protein_node_ids: Dict[int, str] = {}
+
+    for protein_idx in selected_protein_indices:
+        if protein_idx >= len(ctx['protein_info']):
+            continue
+        protein = ctx['protein_info'][protein_idx]
+        protein_id = str(protein.get('id') or protein_idx)
+        protein_node_id = f"protein:{protein_id}"
+        protein_node_ids[protein_idx] = protein_node_id
+        graph_node_map[protein_node_id] = {
+            'id': protein_node_id,
+            'actual_id': protein_id,
+            'label': str(protein.get('protein_name') or protein.get('name') or protein_id),
+            'type': 'protein',
+        }
+
+    graph_links: List[Dict[str, object]] = []
+    seen_edges = set()
+
+    def append_graph_edge(source: str, target: str, kind: str, **metadata: object) -> None:
+        edge_key = (source, target, kind)
+        if edge_key in seen_edges:
+            return
+        seen_edges.add(edge_key)
+        edge: Dict[str, object] = {'source': source, 'target': target, 'kind': kind}
+        edge.update(metadata)
+        graph_links.append(edge)
+
+    for drug in selected_drugs:
+        drug_node_id = f"drug:{drug['id']}"
+        for protein_idx in drug_proteins.get(drug['id'], []):
+            if protein_idx not in selected_protein_index_set:
+                continue
+            protein_node_id = protein_node_ids.get(protein_idx)
+            if protein_node_id:
+                append_graph_edge(drug_node_id, protein_node_id, 'drug-protein')
+
+    for disease in selected_diseases:
+        disease_node_id = f"disease:{disease['id']}"
+        for protein_idx in disease_proteins.get(disease['id'], []):
+            if protein_idx not in selected_protein_index_set:
+                continue
+            protein_node_id = protein_node_ids.get(protein_idx)
+            if protein_node_id:
+                append_graph_edge(protein_node_id, disease_node_id, 'protein-disease')
+
+    for row in comparison[:min(max(payload.top_k, 1), 20)]:
+        append_graph_edge(
+            f"drug:{row['drug_id']}",
+            f"disease:{row['disease_id']}",
+            'prediction',
+            original_score=row['original_score'],
+            improved_score=row['improved_score'],
+            delta=row['delta'],
+            winner=row['winner'],
+        )
+
+    graph_nodes = list(graph_node_map.values())
+    graph_payload = {
+        'nodes': graph_nodes,
+        'links': graph_links,
+    }
 
     return {
         'status': 'success',
@@ -802,10 +987,8 @@ async def compare_predict(payload: ComparePredictRequest):
             },
         },
         'comparison': comparison,
-        'graph2d': {
-            'nodes': graph_nodes,
-            'links': graph_links,
-        },
+        'graph2d': graph_payload,
+        'graph3d': graph_payload,
     }
 
 
@@ -816,16 +999,25 @@ def list_entities(dataset: str = 'C-dataset'):
     data_dir = PROJECT_ROOT / 'AMDGT_original' / 'data' / dataset
     if not data_dir.exists():
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset}")
-    drugs = manager.load_drug_info(data_dir, 0)
+    
+    # We need to get the correct counts to align entities
     try:
-        dc = pd.read_csv(data_dir / 'DiseaseFeature.csv', header=None).shape[0]
+        drug_count = pd.read_csv(data_dir / 'Drug_mol2vec.csv', header=None).shape[0]
     except Exception:
-        dc = 0
-    diseases = manager.load_disease_info(data_dir, len(drugs), dc)
+        drug_count = 0
+    try:
+        disease_count = pd.read_csv(data_dir / 'DiseaseFeature.csv', header=None).shape[0]
+    except Exception:
+        disease_count = 0
+
+    drugs = manager.load_drug_info(data_dir, drug_count)
+    diseases = manager.load_disease_info(data_dir, drug_count, disease_count)
+    
     return {
+        'status': 'success',
         'dataset': dataset,
-        'drugs': [{'id': d['id'], 'name': d.get('name', d['id'])} for d in drugs],
-        'diseases': [{'id': d['id'], 'name': d.get('name', d['id'])} for d in diseases],
+        'drugs': [{'id': d['id'], 'name': d['name']} for d in drugs],
+        'diseases': [{'id': d['id'], 'name': d['name']} for d in diseases],
     }
 
 
