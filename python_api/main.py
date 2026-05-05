@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 import sys
@@ -58,12 +59,6 @@ class PredictRequest(BaseModel):
     dataset: str = 'C-dataset'
 
 
-class ComparePredictRequest(BaseModel):
-    dataset: str = 'C-dataset'
-    drugs: List[str] = Field(default_factory=list, max_length=5)
-    diseases: List[str] = Field(default_factory=list, max_length=5)
-    top_k: int = Field(default=5, ge=1, le=20)
-
 
 DATASET_PRESETS = {
     'B-dataset': {
@@ -100,6 +95,7 @@ class InferenceManager:
     def __init__(self):
         self.cached_models: Dict[str, torch.nn.Module] = {}
         self.cached_data: Dict[str, Dict[str, object]] = {}
+        self.disease_name_cache = self.load_json_map(PROJECT_ROOT / 'scripts' / 'cache' / 'disease_name_map.json')
 
     def get_dataset_paths(self, dataset_name: str):
         data_dir = PROJECT_ROOT / 'AMDGT_original' / 'data' / dataset_name
@@ -176,6 +172,17 @@ class InferenceManager:
             return []
         with path.open('r', encoding='utf-8', newline='') as handle:
             return list(csv.DictReader(handle))
+
+    @staticmethod
+    def load_json_map(path: Path) -> Dict[str, str]:
+        if not path.exists():
+            return {}
+        try:
+            with path.open('r', encoding='utf-8') as handle:
+                data = json.load(handle)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     @staticmethod
     def load_node_entries(data_dir: Path) -> List[Dict[str, str]]:
@@ -259,12 +266,21 @@ class InferenceManager:
             if disease_id:
                 info_map[disease_id] = row
 
+        for disease_id, disease_name in self.disease_name_cache.items():
+            cache_row = {'id': disease_id, 'name': disease_name}
+            disease_id_key = str(disease_id).lower().strip()
+            disease_name_key = str(disease_name).lower().strip()
+            if disease_id_key and disease_id_key not in info_map:
+                info_map[disease_id_key] = cache_row
+            if disease_name_key and disease_name_key not in info_map:
+                info_map[disease_name_key] = cache_row
+
         results = []
         for entry in disease_nodes:
             node_id = entry['node_id']
             node_label = entry['label']
             node_lower = node_label.lower().strip()
-            row = info_map.get(node_lower)
+            row = info_map.get(node_lower) or info_map.get(str(node_id).lower().strip())
             if row:
                 row_id = str(row.get('id') or row.get('disease_id') or '').strip()
                 row_name = str(row.get('name') or row.get('disease_name') or node_label).strip()
@@ -273,13 +289,17 @@ class InferenceManager:
                     resolved_id = node_label if self.looks_like_compact_id(node_label) else node_id
                 elif resolved_id.lower() == row_name.lower() and not self.looks_like_compact_id(resolved_id):
                     resolved_id = node_id or resolved_id
+                if not row_name or row_name.lower() == resolved_id.lower():
+                    row_name = str(self.disease_name_cache.get(resolved_id) or self.disease_name_cache.get(node_label) or row_name or node_label)
                 results.append({
                     'id': resolved_id,
                     'name': row_name,
                 })
             else:
                 fallback_id = node_label if self.looks_like_compact_id(node_label) else node_id
-                results.append({'id': fallback_id or node_label, 'name': node_label})
+                fallback_key = fallback_id or node_label
+                fallback_name = str(self.disease_name_cache.get(fallback_key) or self.disease_name_cache.get(node_label) or node_label)
+                results.append({'id': fallback_key, 'name': fallback_name})
         return results
 
     def load_protein_info(self, data_dir: Path, protein_count: int) -> List[Dict[str, str]]:
@@ -769,227 +789,136 @@ async def predict(payload: PredictRequest):
             'type': target_type
         })
 
-    graph_nodes = [{'id': f"{payload.query_type.split('_')[0]}:{source['id']}", 'actual_id': source['id'], 'label': source.get('name', source['id']), 'type': payload.query_type.split('_')[0], 'color': '#2563eb' if payload.query_type.startswith('drug') else '#dc2626'}]
-    graph_links = []
+    src_type = payload.query_type.split('_')[0]
+    source_node_id = f"{src_type}:{source['id']}"
+    graph_node_map: Dict[str, Dict[str, object]] = {
+        source_node_id: {
+            'id': source_node_id,
+            'actual_id': source['id'],
+            'label': source.get('name', source['id']),
+            'type': src_type,
+            'color': '#2563eb' if src_type == 'drug' else '#dc2626',
+            'smiles': source.get('smiles', ''),
+            'is_source': True,
+        }
+    }
+    graph_links: List[Dict[str, object]] = []
+    seen_edges = set()
 
-    for p in manager.get_related_proteins(ctx, payload.query_type.split('_')[0], source_idx, limit=5):
-        p_id = f"protein:{p['id']}"
-        label = p.get('protein_name', p.get('name', p['id']))
-        graph_nodes.append({'id': p_id, 'actual_id': p['id'], 'label': label, 'type': 'protein', 'color': '#f59e0b'})
-        graph_links.append({'source': graph_nodes[0]['id'], 'target': p_id, 'score': 0.8})
+    def append_graph_link(source_id: str, target_id: str, kind: str, score_value: float) -> None:
+        edge_key = (source_id, target_id, kind)
+        if edge_key in seen_edges:
+            return
+        seen_edges.add(edge_key)
+        graph_links.append({
+            'source': source_id,
+            'target': target_id,
+            'kind': kind,
+            'score': float(round(score_value, 4)),
+        })
 
-    for res in results[:5]:
-        res_id = f"{res['type']}:{res['id']}"
-        graph_nodes.append({'id': res_id, 'actual_id': res['id'], 'label': res['name'], 'type': res['type'], 'color': '#dc2626' if res['type'] == 'disease' else '#2563eb'})
-        graph_links.append({'source': graph_nodes[0]['id'], 'target': res_id, 'score': res['score']})
+    source_protein_indices = manager.get_related_protein_indices(ctx, src_type, source_idx, limit=None)
+    protein_hit_count: Dict[int, int] = {}
+    graph_result_items: List[Dict[str, object]] = []
+
+    for rank, target_idx in enumerate(indices[:5], start=1):
+        item = target_info[int(target_idx)]
+        target_protein_indices = manager.get_related_protein_indices(ctx, target_type, int(target_idx), limit=None)
+        target_protein_set = set(target_protein_indices)
+        shared_protein_indices = [protein_idx for protein_idx in source_protein_indices if protein_idx in target_protein_set][:4]
+
+        for protein_idx in shared_protein_indices:
+            protein_hit_count[protein_idx] = protein_hit_count.get(protein_idx, 0) + 1
+
+        graph_result_items.append({
+            'node_id': f"{target_type}:{item['id']}",
+            'actual_id': item['id'],
+            'label': item.get('name', item['id']),
+            'type': target_type,
+            'color': '#dc2626' if target_type == 'disease' else '#2563eb',
+            'smiles': item.get('smiles', ''),
+            'score': float(round(probs[int(target_idx)], 4)),
+            'rank': rank,
+            'shared_protein_indices': shared_protein_indices,
+        })
+
+    ranked_protein_indices = sorted(
+        protein_hit_count.keys(),
+        key=lambda protein_idx: (protein_hit_count[protein_idx], -protein_idx),
+        reverse=True,
+    )[:8]
+
+    if not ranked_protein_indices:
+        ranked_protein_indices = source_protein_indices[:6]
+
+    selected_protein_set = set(ranked_protein_indices)
+    for protein_idx in ranked_protein_indices:
+        if protein_idx >= len(ctx['protein_info']):
+            continue
+        protein = ctx['protein_info'][protein_idx]
+        protein_node_id = f"protein:{protein['id']}"
+        label = protein.get('protein_name', protein.get('name', protein['id']))
+        seq = protein.get('sequence', '')
+        graph_node_map[protein_node_id] = {
+            'id': protein_node_id,
+            'actual_id': protein['id'],
+            'label': label,
+            'type': 'protein',
+            'color': '#f59e0b',
+            'seq_len': len(seq),
+            'support': protein_hit_count.get(protein_idx, 1),
+        }
+        append_graph_link(source_node_id, protein_node_id, 'source-protein', min(0.95, 0.35 + 0.12 * protein_hit_count.get(protein_idx, 1)))
+
+    for item in graph_result_items:
+        graph_node_map[item['node_id']] = {
+            'id': item['node_id'],
+            'actual_id': item['actual_id'],
+            'label': item['label'],
+            'type': item['type'],
+            'color': item['color'],
+            'smiles': item['smiles'],
+            'score': item['score'],
+            'rank': item['rank'],
+            'shared_protein_count': len(item['shared_protein_indices']),
+        }
+        append_graph_link(source_node_id, item['node_id'], 'prediction', float(item['score']))
+
+        for protein_idx in item['shared_protein_indices']:
+            if protein_idx not in selected_protein_set or protein_idx >= len(ctx['protein_info']):
+                continue
+            protein_node_id = f"protein:{ctx['protein_info'][protein_idx]['id']}"
+            append_graph_link(protein_node_id, item['node_id'], 'protein-target', float(item['score']))
+
+    graph_nodes: List[Dict[str, object]] = [graph_node_map[source_node_id]]
+    for protein_idx in ranked_protein_indices:
+        if protein_idx >= len(ctx['protein_info']):
+            continue
+        protein_node_id = f"protein:{ctx['protein_info'][protein_idx]['id']}"
+        if protein_node_id in graph_node_map:
+            graph_nodes.append(graph_node_map[protein_node_id])
+    for item in graph_result_items:
+        if item['node_id'] in graph_node_map:
+            graph_nodes.append(graph_node_map[item['node_id']])
 
     return {
         'status': 'success',
-        'matched_input': {'id': source['id'], 'name': source.get('name', source['id']), 'type': payload.query_type.split('_')[0]},
+        'matched_input': {'id': source['id'], 'name': source.get('name', source['id']), 'type': src_type, 'smiles': source.get('smiles', '')},
         'results': results,
         'graph': {'nodes': graph_nodes, 'links': graph_links},
         'note': note,
     }
 
 
+
 @app.post('/compare_predict')
-async def compare_predict(payload: ComparePredictRequest):
-    dataset = payload.dataset
-    if dataset not in DATASET_PRESETS:
-        raise HTTPException(status_code=422, detail=f"Dataset không hợp lệ: {dataset}")
+async def compare_predict_removed():
+    raise HTTPException(status_code=404, detail='Endpoint removed.')
 
-    requested_drugs = normalize_requested_entities(payload.drugs, 'thuốc')
-    requested_diseases = normalize_requested_entities(payload.diseases, 'bệnh')
 
-    original_checkpoint = manager.resolve_checkpoint_path(dataset, 'original')
-    if original_checkpoint is None or not original_checkpoint.exists():
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy checkpoint model gốc cho {dataset}.")
 
-    improved_checkpoint = manager.resolve_checkpoint_path(dataset, 'improved')
-    if improved_checkpoint is None or not improved_checkpoint.exists():
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy checkpoint model cải tiến cho {dataset}.")
 
-    ctx = manager.load_context_for_version(dataset, 'improved')
-    selected_drugs = resolve_requested_items(ctx['drugs_info'], requested_drugs, 'thuốc')
-    selected_diseases = resolve_requested_items(ctx['disease_info'], requested_diseases, 'bệnh')
 
-    drug_indices = [ctx['drugs_info'].index(item) for item in selected_drugs]
-    disease_indices = [ctx['disease_info'].index(item) for item in selected_diseases]
-    pair_indices = [(drug_idx, disease_idx) for drug_idx in drug_indices for disease_idx in disease_indices]
-
-    original_scores = manager.score_pairs(dataset, 'original', pair_indices)
-    improved_scores = manager.score_pairs(dataset, 'improved', pair_indices)
-
-    comparison: List[Dict[str, object]] = []
-    pair_offset = 0
-    for drug in selected_drugs:
-        for disease in selected_diseases:
-            original_score = float(round(float(original_scores[pair_offset]), 4))
-            improved_score = float(round(float(improved_scores[pair_offset]), 4))
-            delta = float(round(improved_score - original_score, 4))
-            if delta > 0:
-                winner = 'improved'
-            elif delta < 0:
-                winner = 'original'
-            else:
-                winner = 'tie'
-
-            comparison.append({
-                'drug_id': drug['id'],
-                'drug_name': drug.get('name', drug['id']),
-                'disease_id': disease['id'],
-                'disease_name': disease.get('name', disease['id']),
-                'original_score': original_score,
-                'improved_score': improved_score,
-                'delta': delta,
-                'winner': winner,
-            })
-            pair_offset += 1
-
-    comparison.sort(key=lambda item: float(item['improved_score']), reverse=True)
-
-    graph_node_map: Dict[str, Dict[str, str]] = {}
-    for drug in selected_drugs:
-        graph_node_map[f"drug:{drug['id']}"] = {
-            'id': f"drug:{drug['id']}",
-            'actual_id': drug['id'],
-            'label': drug.get('name', drug['id']),
-            'type': 'drug',
-        }
-    for disease in selected_diseases:
-        graph_node_map[f"disease:{disease['id']}"] = {
-            'id': f"disease:{disease['id']}",
-            'actual_id': disease['id'],
-            'label': disease.get('name', disease['id']),
-            'type': 'disease',
-        }
-
-    drug_proteins: Dict[str, List[int]] = {}
-    disease_proteins: Dict[str, List[int]] = {}
-    protein_scores: Dict[int, Dict[str, int]] = {}
-
-    for drug, drug_idx in zip(selected_drugs, drug_indices):
-        related_indices = manager.get_related_protein_indices(ctx, 'drug', drug_idx, limit=None)
-        drug_proteins[drug['id']] = related_indices
-        for protein_idx in related_indices:
-            if protein_idx >= len(ctx['protein_info']):
-                continue
-            score = protein_scores.setdefault(protein_idx, {'drug_hits': 0, 'disease_hits': 0, 'total_hits': 0})
-            score['drug_hits'] += 1
-            score['total_hits'] += 1
-
-    for disease, disease_idx in zip(selected_diseases, disease_indices):
-        related_indices = manager.get_related_protein_indices(ctx, 'disease', disease_idx, limit=None)
-        disease_proteins[disease['id']] = related_indices
-        for protein_idx in related_indices:
-            if protein_idx >= len(ctx['protein_info']):
-                continue
-            score = protein_scores.setdefault(protein_idx, {'drug_hits': 0, 'disease_hits': 0, 'total_hits': 0})
-            score['disease_hits'] += 1
-            score['total_hits'] += 1
-
-    ranked_protein_indices = sorted(
-        protein_scores.keys(),
-        key=lambda protein_idx: (
-            1 if protein_scores[protein_idx]['drug_hits'] > 0 and protein_scores[protein_idx]['disease_hits'] > 0 else 0,
-            protein_scores[protein_idx]['total_hits'],
-            protein_scores[protein_idx]['drug_hits'] + protein_scores[protein_idx]['disease_hits'],
-            -protein_idx,
-        ),
-        reverse=True,
-    )
-    shared_protein_indices = [
-        protein_idx
-        for protein_idx in ranked_protein_indices
-        if protein_scores[protein_idx]['drug_hits'] > 0 and protein_scores[protein_idx]['disease_hits'] > 0
-    ]
-    selected_protein_indices = (shared_protein_indices or ranked_protein_indices)[:12]
-    selected_protein_index_set = set(selected_protein_indices)
-    protein_node_ids: Dict[int, str] = {}
-
-    for protein_idx in selected_protein_indices:
-        if protein_idx >= len(ctx['protein_info']):
-            continue
-        protein = ctx['protein_info'][protein_idx]
-        protein_id = str(protein.get('id') or protein_idx)
-        protein_node_id = f"protein:{protein_id}"
-        protein_node_ids[protein_idx] = protein_node_id
-        graph_node_map[protein_node_id] = {
-            'id': protein_node_id,
-            'actual_id': protein_id,
-            'label': str(protein.get('protein_name') or protein.get('name') or protein_id),
-            'type': 'protein',
-        }
-
-    graph_links: List[Dict[str, object]] = []
-    seen_edges = set()
-
-    def append_graph_edge(source: str, target: str, kind: str, **metadata: object) -> None:
-        edge_key = (source, target, kind)
-        if edge_key in seen_edges:
-            return
-        seen_edges.add(edge_key)
-        edge: Dict[str, object] = {'source': source, 'target': target, 'kind': kind}
-        edge.update(metadata)
-        graph_links.append(edge)
-
-    for drug in selected_drugs:
-        drug_node_id = f"drug:{drug['id']}"
-        for protein_idx in drug_proteins.get(drug['id'], []):
-            if protein_idx not in selected_protein_index_set:
-                continue
-            protein_node_id = protein_node_ids.get(protein_idx)
-            if protein_node_id:
-                append_graph_edge(drug_node_id, protein_node_id, 'drug-protein')
-
-    for disease in selected_diseases:
-        disease_node_id = f"disease:{disease['id']}"
-        for protein_idx in disease_proteins.get(disease['id'], []):
-            if protein_idx not in selected_protein_index_set:
-                continue
-            protein_node_id = protein_node_ids.get(protein_idx)
-            if protein_node_id:
-                append_graph_edge(protein_node_id, disease_node_id, 'protein-disease')
-
-    for row in comparison[:min(max(payload.top_k, 1), 20)]:
-        append_graph_edge(
-            f"drug:{row['drug_id']}",
-            f"disease:{row['disease_id']}",
-            'prediction',
-            original_score=row['original_score'],
-            improved_score=row['improved_score'],
-            delta=row['delta'],
-            winner=row['winner'],
-        )
-
-    graph_nodes = list(graph_node_map.values())
-    graph_payload = {
-        'nodes': graph_nodes,
-        'links': graph_links,
-    }
-
-    return {
-        'status': 'success',
-        'dataset': dataset,
-        'input': {
-            'drugs': [{'id': item['id'], 'name': item.get('name', item['id'])} for item in selected_drugs],
-            'diseases': [{'id': item['id'], 'name': item.get('name', item['id'])} for item in selected_diseases],
-            'top_k': payload.top_k,
-        },
-        'models': {
-            'original': {
-                'checkpoint': str(original_checkpoint),
-                'results': top_model_results(comparison, 'original_score', payload.top_k),
-            },
-            'improved': {
-                'checkpoint': str(improved_checkpoint),
-                'results': top_model_results(comparison, 'improved_score', payload.top_k),
-            },
-        },
-        'comparison': comparison,
-        'graph2d': graph_payload,
-        'graph3d': graph_payload,
-    }
 
 
 @app.get('/entities')
@@ -1016,7 +945,7 @@ def list_entities(dataset: str = 'C-dataset'):
     return {
         'status': 'success',
         'dataset': dataset,
-        'drugs': [{'id': d['id'], 'name': d['name']} for d in drugs],
+        'drugs': [{'id': d['id'], 'name': d['name'], 'smiles': d.get('smiles', '')} for d in drugs],
         'diseases': [{'id': d['id'], 'name': d['name']} for d in diseases],
     }
 
