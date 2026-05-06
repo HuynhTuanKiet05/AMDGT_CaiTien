@@ -16,14 +16,20 @@ Tài liệu này hướng dẫn bạn cách khởi chạy toàn bộ hệ thốn
 
 Backend AI chịu trách nhiệm tính toán và chạy mô hình học sâu.
 
+
 1.  **Mở Terminal** và di chuyển đến thư mục dự án.
+cd c:\xampp\htdocs\amdgt_final\Colab_V6
+
 2.  **Kích hoạt môi trường Conda**:
     ```powershell
-    conda activate amdgt_env
+     **Kích hoạt môi trường Venv**
+     .\.venv\Scripts\activate
+    
     ```
 3.  **Di chuyển vào thư mục API**:
     ```powershell
     cd python_api
+    
     ```
 4.  **Chạy Server Uvicorn**:
     ```powershell
@@ -42,6 +48,8 @@ Frontend cung cấp giao diện người dùng và quản lý dữ liệu lịch
 2.  **Khởi chạy PHP Server**:
     ```powershell
     php -S localhost:8080 -t public
+    C:\xampp\php\php.exe -S localhost:8080 -t public
+
     ```
 3.  **Truy cập hệ thống**:
     Mở trình duyệt và nhập địa chỉ: `http://localhost:8080`

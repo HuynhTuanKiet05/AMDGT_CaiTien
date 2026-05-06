@@ -14,7 +14,7 @@ echo Dang khoi dong Python API (uvicorn)...
 cd /d %~dp0\python_api
 
 set PYTHONUTF8=1
-start "Python API - uvicorn" /min cmd /c "call ..\. venv\Scripts\activate && uvicorn main:app --host 127.0.0.1 --port 8000 --log-level info 2>&1 | tee ..\logs\uvicorn.log"
+start "Python API - uvicorn" /min cmd /c "call ..\.venv\Scripts\activate && uvicorn main:app --host 127.0.0.1 --port 8000 --log-level info 2>&1 | tee ..\logs\uvicorn.log"
 
 timeout /t 4 /nobreak >nul
 

@@ -44,18 +44,24 @@ from fastapi import FastAPI, HTTPException, Request
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
     tb = traceback.format_exc()
-    print(f"[ERROR] Unhandled on {request.url.path}:\n{tb}")
+    print(f"[ERROR] Unhandled on {request.url.path}:\n{tb}", flush=True)
     return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
 
 
 device = torch.device(os.environ.get('AMDGT_DEVICE', 'cuda' if torch.cuda.is_available() else 'cpu'))
-print(f"Using device: {device}")
+print(f"[STARTUP] Using device: {device}", flush=True)
 
 
 class PredictRequest(BaseModel):
     query_type: str = Field(pattern='^(drug_to_disease|disease_to_drug)$')
     input_text: str
     top_k: int = 10
+    dataset: str = 'C-dataset'
+
+
+class PairPredictRequest(BaseModel):
+    drug_inputs: List[str] = Field(default_factory=list)
+    disease_inputs: List[str] = Field(default_factory=list)
     dataset: str = 'C-dataset'
 
 
@@ -706,6 +712,62 @@ def resolve_requested_items(items: List[Dict[str, str]], values: List[str], labe
     return resolved
 
 
+def resolve_pair_model_scores(dataset: str, pair_indices: List[Tuple[int, int]], ctx: Dict[str, object]) -> Tuple[np.ndarray, np.ndarray | None, str]:
+    x_infer = torch.tensor(pair_indices, dtype=torch.long, device=device)
+
+    def score_version(model_version: str) -> Tuple[np.ndarray | None, str | None]:
+        checkpoint_path = manager.resolve_checkpoint_path(dataset, model_version)
+        if checkpoint_path is None or not checkpoint_path.exists():
+            return None, None
+        try:
+            return manager.score_pairs(dataset, model_version, pair_indices), checkpoint_path.name
+        except HTTPException as exc:
+            print(f"[predict] Unable to score {model_version} on {dataset}: {exc.detail}")
+            return None, None
+        except Exception as exc:
+            print(f"[predict] Unable to score {model_version} on {dataset}: {exc}")
+            return None, None
+
+    improved_probs, improved_checkpoint_name = score_version('improved')
+    if improved_probs is None:
+        model = manager.get_model(dataset)
+        is_real = model is not None
+        if is_real:
+            with torch.no_grad():
+                _, scores = model(
+                    ctx['drdr_graph'], ctx['didi_graph'], ctx['drdipr_graph'],
+                    ctx['drug_feature'], ctx['disease_feature'], ctx['protein_feature'],
+                    x_infer,
+                    drug_topo_feat=ctx['drug_topo_feat'],
+                    disease_topo_feat=ctx['disease_topo_feat'],
+                    edge_stats=ctx['edge_stats'],
+                )
+                improved_probs = fn.softmax(scores, dim=-1)[:, 1].cpu().numpy()
+            if improved_checkpoint_name is None and ctx['model_path'] is not None:
+                improved_checkpoint_name = Path(ctx['model_path']).name
+        else:
+            improved_probs = np.random.uniform(0.1, 0.9, len(pair_indices))
+    else:
+        is_real = True
+
+    original_probs, original_checkpoint_name = score_version('original')
+
+    note_parts: List[str] = []
+    if improved_checkpoint_name:
+        note_parts.append(f"Checkpoint cải tiến: {improved_checkpoint_name}.")
+    elif is_real:
+        note_parts.append(f"Đang sử dụng checkpoint cải tiến trên {dataset}.")
+    else:
+        note_parts.append(f"Đang chạy Demo cho {dataset} (chưa tìm thấy checkpoint cải tiến phù hợp).")
+
+    if original_checkpoint_name:
+        note_parts.append(f"Checkpoint gốc: {original_checkpoint_name}.")
+    else:
+        note_parts.append(f"Chưa có checkpoint model gốc cho {dataset}.")
+
+    return improved_probs, original_probs, ' '.join(note_parts)
+
+
 def top_model_results(rows: List[Dict[str, object]], score_key: str, top_k: int) -> List[Dict[str, object]]:
     ranked = sorted(rows, key=lambda item: float(item[score_key]), reverse=True)[:top_k]
     return [
@@ -724,14 +786,6 @@ def top_model_results(rows: List[Dict[str, object]], score_key: str, top_k: int)
 async def predict(payload: PredictRequest):
     dataset = payload.dataset
     ctx = manager.load_context(dataset)
-    model = manager.get_model(dataset)
-    is_real = model is not None
-
-    if is_real and ctx['model_path'] is not None:
-        note = f"Đang sử dụng checkpoint {Path(ctx['model_path']).name} trên {dataset}."
-    else:
-        note = f"Đang chạy Demo cho {dataset} (chưa tìm thấy checkpoint phù hợp)."
-
     source = None
 
     if payload.query_type == 'drug_to_disease':
@@ -745,7 +799,7 @@ async def predict(payload: PredictRequest):
             return {'status': 'success', 'results': [], 'note': note, 'graph': {'nodes': [], 'links': []}}
         source_idx = ctx['drugs_info'].index(source)
         num_diseases = len(ctx['disease_info'])
-        x_infer = torch.tensor([[source_idx, i] for i in range(num_diseases)], dtype=torch.long, device=device)
+        pair_indices = [(source_idx, i) for i in range(num_diseases)]
         target_info = ctx['disease_info']
         target_type = 'disease'
     else:
@@ -760,32 +814,25 @@ async def predict(payload: PredictRequest):
 
         source_idx = ctx['disease_info'].index(source)
         num_drugs = len(ctx['drugs_info'])
-        x_infer = torch.tensor([[i, source_idx] for i in range(num_drugs)], dtype=torch.long, device=device)
+        pair_indices = [(i, source_idx) for i in range(num_drugs)]
         target_info = ctx['drugs_info']
         target_type = 'drug'
 
-    if is_real:
-        with torch.no_grad():
-            _, scores = model(
-                ctx['drdr_graph'], ctx['didi_graph'], ctx['drdipr_graph'],
-                ctx['drug_feature'], ctx['disease_feature'], ctx['protein_feature'],
-                x_infer,
-                drug_topo_feat=ctx['drug_topo_feat'],
-                disease_topo_feat=ctx['disease_topo_feat'],
-                edge_stats=ctx['edge_stats'],
-            )
-            probs = fn.softmax(scores, dim=-1)[:, 1].cpu().numpy()
-    else:
-        probs = np.random.uniform(0.1, 0.9, len(target_info))
+    improved_probs, original_probs, note = resolve_pair_model_scores(dataset, pair_indices, ctx)
+    probs = improved_probs
 
     results = []
     indices = np.argsort(-probs)[:payload.top_k]
     for idx in indices:
         item = target_info[idx]
+        improved_score = float(round(float(probs[idx]), 4))
+        original_score = float(round(float(original_probs[idx]), 4)) if original_probs is not None else None
         results.append({
             'id': item['id'],
             'name': item.get('name', item['id']),
-            'score': float(round(probs[idx], 4)),
+            'score': improved_score,
+            'improved_score': improved_score,
+            'original_score': original_score,
             'type': target_type
         })
 
@@ -910,6 +957,104 @@ async def predict(payload: PredictRequest):
     }
 
 
+@app.post('/predict_pairs')
+async def predict_pairs(payload: PairPredictRequest):
+    dataset = payload.dataset
+    ctx = manager.load_context(dataset)
+
+    requested_drugs = normalize_requested_entities(payload.drug_inputs, 'thuốc')
+    requested_diseases = normalize_requested_entities(payload.disease_inputs, 'bệnh')
+    resolved_drugs = resolve_requested_items(ctx['drugs_info'], requested_drugs, 'thuốc')
+    resolved_diseases = resolve_requested_items(ctx['disease_info'], requested_diseases, 'bệnh')
+
+    pair_indices: List[Tuple[int, int]] = []
+    pair_meta: List[Dict[str, object]] = []
+    for drug in resolved_drugs:
+        drug_idx = ctx['drugs_info'].index(drug)
+        for disease in resolved_diseases:
+            disease_idx = ctx['disease_info'].index(disease)
+            pair_indices.append((drug_idx, disease_idx))
+            pair_meta.append({
+                'drug_id': drug['id'],
+                'drug_name': drug.get('name', drug['id']),
+                'drug_smiles': drug.get('smiles', ''),
+                'disease_id': disease['id'],
+                'disease_name': disease.get('name', disease['id']),
+            })
+
+    improved_probs, original_probs, note = resolve_pair_model_scores(dataset, pair_indices, ctx)
+
+    pairs: List[Dict[str, object]] = []
+    pair_lookup: Dict[Tuple[str, str], Dict[str, object]] = {}
+    for index, meta in enumerate(pair_meta):
+        improved_score = float(round(float(improved_probs[index]), 4))
+        original_score = float(round(float(original_probs[index]), 4)) if original_probs is not None else None
+        delta_score = round(improved_score - original_score, 4) if original_score is not None else None
+        pair_entry = {
+            'pair_key': f"{meta['drug_id']}::{meta['disease_id']}",
+            'drug_id': meta['drug_id'],
+            'drug_name': meta['drug_name'],
+            'drug_smiles': meta['drug_smiles'],
+            'disease_id': meta['disease_id'],
+            'disease_name': meta['disease_name'],
+            'score': improved_score,
+            'improved_score': improved_score,
+            'original_score': original_score,
+            'delta_score': delta_score,
+        }
+        pairs.append(pair_entry)
+        pair_lookup[(str(meta['drug_id']), str(meta['disease_id']))] = pair_entry
+
+    matrix: List[Dict[str, object]] = []
+    for drug in resolved_drugs:
+        cells: List[Dict[str, object]] = []
+        for disease in resolved_diseases:
+            pair_entry = pair_lookup[(str(drug['id']), str(disease['id']))]
+            cells.append({
+                'pair_key': pair_entry['pair_key'],
+                'disease_id': pair_entry['disease_id'],
+                'disease_name': pair_entry['disease_name'],
+                'score': pair_entry['score'],
+                'improved_score': pair_entry['improved_score'],
+                'original_score': pair_entry['original_score'],
+                'delta_score': pair_entry['delta_score'],
+            })
+        matrix.append({
+            'drug_id': drug['id'],
+            'drug_name': drug.get('name', drug['id']),
+            'drug_smiles': drug.get('smiles', ''),
+            'cells': cells,
+        })
+
+    ranked_pairs = sorted(pairs, key=lambda item: float(item['improved_score']), reverse=True)
+
+
+    return {
+        'status': 'success',
+        'mode': 'pair_matrix',
+        'dataset': dataset,
+        'pair_count': len(pairs),
+        'selected_drugs': [
+            {
+                'id': item['id'],
+                'name': item.get('name', item['id']),
+                'smiles': item.get('smiles', ''),
+            }
+            for item in resolved_drugs
+        ],
+        'selected_diseases': [
+            {
+                'id': item['id'],
+                'name': item.get('name', item['id']),
+            }
+            for item in resolved_diseases
+        ],
+        'pairs': pairs,
+        'ranked_pairs': ranked_pairs,
+        'matrix': matrix,
+        'note': f"Đã chấm {len(pairs)} cặp thuốc-bệnh từ {len(resolved_drugs)} thuốc và {len(resolved_diseases)} bệnh đã chọn. {note}",
+    }
+
 
 @app.post('/compare_predict')
 async def compare_predict_removed():
@@ -953,3 +1098,14 @@ def list_entities(dataset: str = 'C-dataset'):
 @app.get('/health')
 def health():
     return {'status': 'ok', 'device': str(device)}
+
+
+@app.on_event('startup')
+def _startup_preload():
+    """Pre-load C-dataset context on startup so the first request is fast."""
+    try:
+        print('[STARTUP] Pre-loading C-dataset context...', flush=True)
+        manager.load_context('C-dataset')
+        print('[STARTUP] C-dataset context loaded successfully.', flush=True)
+    except Exception as exc:
+        print(f'[STARTUP] Warning: could not pre-load C-dataset: {exc}', flush=True)

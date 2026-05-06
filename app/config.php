@@ -15,7 +15,7 @@ return [
     ],
     'python_api' => [
         'base_url' => 'http://127.0.0.1:8000',
-        'timeout' => 20,
+        'timeout' => 120,
         'compare_timeout' => 180,
     ],
     'session_name' => 'drug_disease_ai_session',

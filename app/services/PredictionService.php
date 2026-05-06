@@ -43,7 +43,7 @@ class PredictionService
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
             CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_TIMEOUT => (int) config('python_api.timeout', 20),
+            CURLOPT_TIMEOUT => (int) config('python_api.timeout', 120),
         ]);
 
         $response = curl_exec($ch);
@@ -55,7 +55,55 @@ class PredictionService
         }
 
         if ($statusCode >= 400) {
-            throw new RuntimeException('Python API trả lỗi HTTP ' . $statusCode);
+            $detail = '';
+            $decoded = json_decode($response, true);
+            if (is_array($decoded) && isset($decoded['detail'])) {
+                $detail = is_string($decoded['detail']) ? $decoded['detail'] : json_encode($decoded['detail'], JSON_UNESCAPED_UNICODE);
+            }
+            throw new RuntimeException('Python API trả lỗi HTTP ' . $statusCode . ($detail !== '' ? ': ' . $detail : ''));
+        }
+
+        $decoded = json_decode($response, true);
+        if (!is_array($decoded)) {
+            throw new RuntimeException('Dữ liệu trả về từ Python API không hợp lệ.');
+        }
+
+        return $decoded;
+    }
+
+    public static function callPairMatrixApi(array $drugInputs, array $diseaseInputs, string $dataset = 'C-dataset'): array
+    {
+        $url = rtrim((string) config('python_api.base_url'), '/') . '/predict_pairs';
+        $payload = json_encode([
+            'drug_inputs' => array_values($drugInputs),
+            'disease_inputs' => array_values($diseaseInputs),
+            'dataset' => $dataset,
+        ], JSON_UNESCAPED_UNICODE);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_TIMEOUT => (int) config('python_api.timeout', 120),
+        ]);
+
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $statusCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if ($response === false || $error) {
+            throw new RuntimeException('Không thể kết nối Python API: ' . $error);
+        }
+
+        if ($statusCode >= 400) {
+            $detail = '';
+            $decoded = json_decode($response, true);
+            if (is_array($decoded) && isset($decoded['detail'])) {
+                $detail = is_string($decoded['detail']) ? $decoded['detail'] : json_encode($decoded['detail'], JSON_UNESCAPED_UNICODE);
+            }
+            throw new RuntimeException('Python API trả lỗi HTTP ' . $statusCode . ($detail !== '' ? ': ' . $detail : ''));
         }
 
         $decoded = json_decode($response, true);
