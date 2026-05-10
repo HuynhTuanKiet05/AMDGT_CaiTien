@@ -179,6 +179,111 @@ function count_csv_lines(string $path): int
     return $rows;
 }
 
+function benchmark_metric_value(array $row, string $column): ?float
+{
+    $value = trim((string) ($row[$column] ?? ''));
+    if ($value === '' || !is_numeric($value)) {
+        return null;
+    }
+
+    return (float) $value;
+}
+
+function format_benchmark_percent(?float $value): string
+{
+    if ($value === null) {
+        return '—';
+    }
+
+    return number_format($value * 100, 2);
+}
+
+function load_model_benchmark_datasets(): array
+{
+    $benchmarkDir = realpath(__DIR__ . '/../thong_so_chay_test_goc_va_cai_tien');
+    if ($benchmarkDir === false) {
+        return [];
+    }
+
+    $configs = [
+        'B-dataset' => [
+            'label' => 'B Dataset',
+            'baseline_file' => '10_fold_results_B_Goc.csv',
+            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_B_caiTien.csv',
+        ],
+        'C-dataset' => [
+            'label' => 'C Dataset',
+            'baseline_file' => '10_fold_results_C_Goc.csv',
+            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_C_CaiTien.csv',
+        ],
+        'F-dataset' => [
+            'label' => 'F Dataset',
+            'baseline_file' => '10_fold_results_F_Goc.csv',
+            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_F_caiTien.csv',
+        ],
+    ];
+
+    $datasets = [];
+    foreach ($configs as $datasetKey => $config) {
+        $baselineRows = load_csv_assoc($benchmarkDir . DIRECTORY_SEPARATOR . $config['baseline_file']);
+        $improvedRows = load_csv_assoc($benchmarkDir . DIRECTORY_SEPARATOR . $config['improved_file']);
+        $orderKeys = [];
+        $orderLabels = [];
+        $indexRows = static function (array $rows) use (&$orderKeys, &$orderLabels): array {
+            $map = [];
+            foreach ($rows as $row) {
+                $label = trim((string) ($row['Fold'] ?? ''));
+                if ($label === '') {
+                    continue;
+                }
+
+                $normalized = strtolower($label);
+                $map[$normalized] = $row;
+                if (!isset($orderLabels[$normalized])) {
+                    $orderLabels[$normalized] = $label;
+                    $orderKeys[] = $normalized;
+                }
+            }
+
+            return $map;
+        };
+
+        $baselineMap = $indexRows($baselineRows);
+        $improvedMap = $indexRows($improvedRows);
+        $rows = [];
+        foreach ($orderKeys as $normalizedKey) {
+            $label = $orderLabels[$normalizedKey] ?? $normalizedKey;
+            $baselineRow = $baselineMap[$normalizedKey] ?? [];
+            $improvedRow = $improvedMap[$normalizedKey] ?? [];
+            $rows[] = [
+                'fold' => $label,
+                'is_summary' => in_array($normalizedKey, ['mean', 'std'], true),
+                'baseline' => [
+                    'auc' => benchmark_metric_value($baselineRow, 'AUC'),
+                    'aupr' => benchmark_metric_value($baselineRow, 'AUPR'),
+                    'f1' => benchmark_metric_value($baselineRow, 'F1-score'),
+                ],
+                'improved' => [
+                    'auc' => benchmark_metric_value($improvedRow, 'AUC'),
+                    'aupr' => benchmark_metric_value($improvedRow, 'AUPR'),
+                    'f1' => benchmark_metric_value($improvedRow, 'F1-score'),
+                ],
+            ];
+        }
+
+        $datasets[$datasetKey] = [
+            'label' => $config['label'],
+            'rows' => $rows,
+            'source_files' => [
+                'baseline' => $config['baseline_file'],
+                'improved' => $config['improved_file'],
+            ],
+        ];
+    }
+
+    return $datasets;
+}
+
 function load_node_entries_php(string $dataDir): array
 {
     foreach (['AllNode.csv', 'Allnode.csv'] as $filename) {
@@ -1238,6 +1343,108 @@ function render_prediction_graph(array $graph): string
      return (string) ob_get_clean();
  }
 
+ function render_model_benchmark_section(array $datasets, string $activeDataset): string
+ {
+     if ($datasets === []) {
+         return '';
+     }
+
+     if (!isset($datasets[$activeDataset])) {
+         $activeDataset = (string) array_key_first($datasets);
+     }
+
+     ob_start();
+     ?>
+     <section class="glass-card benchmark-section" id="benchmark-comparison" style="margin-top:1.5rem;">
+         <div class="card-header">
+             <h2 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;">leaderboard</span> So sánh kết quả test model</h2>
+             <p class="muted">Kết quả 10-fold test của model gốc và model cải tiến trên 3 tập dữ liệu B, C, F. Bảng được lấy trực tiếp từ thư mục <code>thong_so_chay_test_goc_va_cai_tien</code>.</p>
+         </div>
+
+         <div class="benchmark-tabs" role="tablist" aria-label="Chọn dataset benchmark">
+             <?php foreach ($datasets as $datasetKey => $datasetInfo): ?>
+                 <?php
+                 $isActive = $datasetKey === $activeDataset;
+                 $panelId = 'benchmark-panel-' . preg_replace('/[^a-z0-9]+/i', '-', strtolower((string) $datasetKey));
+                 ?>
+                 <button
+                     type="button"
+                     class="benchmark-tab<?= $isActive ? ' is-active' : '' ?>"
+                     data-benchmark-tab="<?= e((string) $datasetKey) ?>"
+                     aria-selected="<?= $isActive ? 'true' : 'false' ?>"
+                     aria-controls="<?= e($panelId) ?>"
+                 >
+                     <?= e((string) ($datasetInfo['label'] ?? $datasetKey)) ?>
+                 </button>
+             <?php endforeach; ?>
+         </div>
+
+         <?php foreach ($datasets as $datasetKey => $datasetInfo): ?>
+             <?php
+             $rows = $datasetInfo['rows'] ?? [];
+             $isActive = $datasetKey === $activeDataset;
+             $panelId = 'benchmark-panel-' . preg_replace('/[^a-z0-9]+/i', '-', strtolower((string) $datasetKey));
+             ?>
+             <div class="benchmark-panel<?= $isActive ? ' is-active' : '' ?>" id="<?= e($panelId) ?>" data-benchmark-panel="<?= e((string) $datasetKey) ?>">
+                 <div class="benchmark-panel-header">
+                     <div class="benchmark-panel-title">
+                         <span class="material-symbols-outlined" style="font-size:18px;">table_view</span>
+                         <span>Fold-by-Fold Results</span>
+                     </div>
+                     <div class="benchmark-panel-meta">Baseline = model gốc · Improved = model cải tiến</div>
+                 </div>
+
+                 <?php if ($rows === []): ?>
+                     <div class="alert alert-error">Không đọc được file số liệu cho <?= e((string) ($datasetInfo['label'] ?? $datasetKey)) ?>.</div>
+                 <?php else: ?>
+                     <div class="benchmark-table-wrap">
+                         <table class="benchmark-table">
+                             <thead>
+                                 <tr>
+                                     <th rowspan="2">Fold</th>
+                                     <th colspan="3">Baseline</th>
+                                     <th colspan="3">Improved</th>
+                                 </tr>
+                                 <tr>
+                                     <th>AUC</th>
+                                     <th>AUPR</th>
+                                     <th>F1</th>
+                                     <th>AUC</th>
+                                     <th>AUPR</th>
+                                     <th>F1</th>
+                                 </tr>
+                             </thead>
+                             <tbody>
+                                 <?php foreach ($rows as $row): ?>
+                                     <?php
+                                     $rowClass = !empty($row['is_summary']) ? 'benchmark-row-summary' : '';
+                                     $foldLabel = (string) ($row['fold'] ?? '');
+                                     $displayFold = !empty($row['is_summary']) ? strtoupper($foldLabel) : $foldLabel;
+                                     ?>
+                                     <tr class="<?= e($rowClass) ?>">
+                                         <th><?= e($displayFold) ?></th>
+                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['auc'] ?? null)) ?></td>
+                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['aupr'] ?? null)) ?></td>
+                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['f1'] ?? null)) ?></td>
+                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['auc'] ?? null)) ?></td>
+                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['aupr'] ?? null)) ?></td>
+                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['f1'] ?? null)) ?></td>
+                                     </tr>
+                                 <?php endforeach; ?>
+                             </tbody>
+                         </table>
+                     </div>
+                     <div class="benchmark-source-note">
+                         File nguồn: <code><?= e((string) ($datasetInfo['source_files']['baseline'] ?? '')) ?></code> và <code><?= e((string) ($datasetInfo['source_files']['improved'] ?? '')) ?></code>
+                     </div>
+                 <?php endif; ?>
+             </div>
+         <?php endforeach; ?>
+     </section>
+     <?php
+     return (string) ob_get_clean();
+ }
+
  function render_prediction_group_section(array $group): string
  {
      $results = $group['results'] ?? [];
@@ -1430,6 +1637,7 @@ $matchedInput = $resultData['matched_input'] ?? null;
 $results      = $resultData['results'] ?? [];
 $graphData    = $resultData['graph'] ?? ['nodes' => [], 'links' => []];
 $noteText     = $resultData['note'] ?? '';
+$benchmarkDatasets = load_model_benchmark_datasets();
 ?>
  <!DOCTYPE html>
  <html lang="vi">
@@ -1512,6 +1720,30 @@ $noteText     = $resultData['note'] ?? '';
         .pair-matrix-delta.is-positive { color: #86efac; }
         .pair-matrix-delta.is-negative { color: #fca5a5; }
         .pair-matrix-delta.is-neutral { color: #cbd5e1; }
+        .benchmark-section { background: linear-gradient(180deg, rgba(8,13,26,.96), rgba(12,19,34,.92)); }
+        .benchmark-tabs { display: flex; justify-content: center; flex-wrap: wrap; gap: .85rem; margin-bottom: 1.25rem; }
+        .benchmark-tab { border: 1px solid rgba(96,165,250,.14); background: rgba(30,41,59,.55); color: #cbd5e1; border-radius: 12px; padding: .8rem 1.35rem; min-width: 116px; font-size: .84rem; font-weight: 700; cursor: pointer; transition: all .16s ease; }
+        .benchmark-tab:hover { border-color: rgba(96,165,250,.35); color: #f8fafc; transform: translateY(-1px); }
+        .benchmark-tab.is-active { background: linear-gradient(180deg, rgba(37,99,235,.28), rgba(30,64,175,.22)); color: #dbeafe; border-color: rgba(96,165,250,.55); box-shadow: 0 0 0 1px rgba(96,165,250,.16) inset, 0 16px 32px rgba(37,99,235,.16); }
+        .benchmark-panel { display: none; }
+        .benchmark-panel.is-active { display: block; }
+        .benchmark-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .benchmark-panel-title { display: flex; align-items: center; gap: .55rem; color: #f8fafc; font-size: 1.02rem; font-weight: 700; }
+        .benchmark-panel-meta { color: #94a3b8; font-size: .78rem; }
+        .benchmark-table-wrap { overflow-x: auto; border: 1px solid rgba(96,165,250,.12); border-radius: 18px; background: rgba(15,23,42,.68); }
+        .benchmark-table { width: 100%; min-width: 820px; border-collapse: collapse; }
+        .benchmark-table thead th { padding: .9rem 1rem; text-align: center; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+        .benchmark-table thead tr:first-child th { background: rgba(30,41,59,.92); color: #cbd5e1; border-bottom: 1px solid rgba(255,255,255,.06); }
+        .benchmark-table thead tr:last-child th { background: rgba(21,31,56,.92); color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,.06); }
+        .benchmark-table tbody th,
+        .benchmark-table tbody td { padding: .92rem 1rem; border-top: 1px solid rgba(255,255,255,.05); }
+        .benchmark-table tbody th { text-align: left; color: #f8fafc; font-weight: 700; white-space: nowrap; }
+        .benchmark-cell-baseline { text-align: center; color: #cbd5e1; font-weight: 600; }
+        .benchmark-cell-improved { text-align: center; color: #4ade80; font-weight: 700; }
+        .benchmark-row-summary { background: rgba(245,158,11,.08); }
+        .benchmark-row-summary th,
+        .benchmark-row-summary td { color: #fbbf24; font-weight: 700; }
+        .benchmark-source-note { margin-top: .85rem; color: #94a3b8; font-size: .78rem; }
         /* Predict form */
         .query-toggle { display: flex; gap: 0; border: 1px solid rgba(255,255,255,.15); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
         .query-toggle label { flex: 1; text-align: center; padding: .55rem .75rem; font-size: .82rem; cursor: pointer; color: #94a3b8; transition: background .15s, color .15s; }
@@ -1653,6 +1885,8 @@ $noteText     = $resultData['note'] ?? '';
                 <div class="alert alert-error"><?= e($error) ?></div>
             <?php endif; ?>
 
+            <?= render_model_benchmark_section($benchmarkDatasets, $dataset) ?>
+
             <!-- ── Prediction Form ── -->
             <div class="glass-card" id="predict-form-panel" style="margin-top:1.5rem;">
                 <div class="card-header">
@@ -1784,6 +2018,34 @@ if (dsEl) {
         window.location.href = `?dataset=${encodeURIComponent(dsEl.value)}`;
     });
 }
+
+function activateBenchmarkTab(datasetKey) {
+    document.querySelectorAll('[data-benchmark-tab]').forEach((button) => {
+        const active = button.dataset.benchmarkTab === datasetKey;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    document.querySelectorAll('[data-benchmark-panel]').forEach((panel) => {
+        panel.classList.toggle('is-active', panel.dataset.benchmarkPanel === datasetKey);
+    });
+}
+
+(function initBenchmarkTabs() {
+    const buttons = Array.from(document.querySelectorAll('[data-benchmark-tab]'));
+    if (!buttons.length) return;
+
+    buttons.forEach((button) => {
+        button.addEventListener('click', () => {
+            activateBenchmarkTab(button.dataset.benchmarkTab || '');
+        });
+    });
+
+    const initialButton = buttons.find((button) => button.classList.contains('is-active')) || buttons[0];
+    if (initialButton) {
+        activateBenchmarkTab(initialButton.dataset.benchmarkTab || '');
+    }
+})();
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
