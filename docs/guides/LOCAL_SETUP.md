@@ -34,16 +34,33 @@ Tài liệu này hỗ trợ song song 2 cách thiết lập môi trường Pytho
 
 Hệ thống cần database MySQL để lưu thông tin tài khoản, danh sách thực thể sinh học (thuốc, bệnh) và lịch sử dự đoán.
 
-1. Khởi động **XAMPP Control Panel**, nhấn **Start** cho cả **Apache** và **MySQL**.
+Bạn có thể thực hiện theo **1 trong 2 cách** sau:
+
+### 👉 CÁCH 1: Thiết lập tự động bằng Script (Khuyên dùng - Cực nhanh & Đơn giản)
+*Cách này đã được lập trình sẵn để tự động tạo Database, tạo bảng và import toàn bộ dữ liệu thực thể sinh học mẫu chỉ bằng 1 câu lệnh.*
+
+1. Khởi động **XAMPP Control Panel** hoặc **Laragon**, nhấn **Start** dịch vụ **MySQL**.
+2. Mở một Terminal thường (CMD hoặc PowerShell) tại gốc dự án và gõ lệnh:
+   ```powershell
+   php database_setup.php
+   ```
+3. Chương trình sẽ tự động thực hiện từ A-Z: Kết nối MySQL, tạo database `drug_disease_ai` nếu chưa có, tạo đầy đủ các bảng dữ liệu (`users`, `drugs`, `diseases`,...) và tự động import dữ liệu sinh học mẫu.
+
+---
+
+### 👉 CÁCH 2: Thiết lập thủ công (Truyền thống qua phpMyAdmin)
+*Nếu bạn muốn tự tay thao tác trực quan trên trình duyệt:*
+
+1. Khởi động **XAMPP Control Panel** (hoặc Laragon), nhấn **Start** cả **Apache** và **MySQL**.
 2. Mở trình duyệt, truy cập trang quản lý cơ sở dữ liệu: `http://localhost/phpmyadmin`
 3. Nhấp vào **New** (Mới) ở menu bên trái để tạo Database:
-   * **Tên Database:** `amdgt_db` (hoặc tên tùy ý của bạn).
+   * **Tên Database:** `drug_disease_ai` (hoặc tên tùy ý của bạn).
    * **Bảng mã (Collation):** Chọn `utf8mb4_general_ci`.
    * Nhấn **Create** (Tạo).
-4. Chọn database `amdgt_db` vừa tạo, nhấp vào thẻ **Import** (Nhập) ở menu phía trên.
+4. Chọn database vừa tạo, nhấp vào thẻ **Import** (Nhập) ở menu phía trên.
 5. Nhấn **Choose File** (Chọn tệp) và trỏ tới file SQL cấu trúc trong dự án:
    `d:\LapTrinh\Đồ án cơ sở\AMDGT_CaiTien\database\database_schema.sql`
-6. Cuộn xuống dưới cùng và nhấn **Import** (Nhập). Hệ thống sẽ tự động tạo các bảng dữ liệu cần thiết.
+6. Cuộn xuống dưới cùng và nhấn **Import** (Nhập). Hệ thống sẽ tự động khởi tạo các bảng dữ liệu cần thiết.
 
 ---
 
