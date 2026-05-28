@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import json
@@ -1126,6 +1126,7 @@ async def predict_pairs(payload: PairPredictRequest):
             'type': 'protein',
             'color': '#f59e0b',
             'seq_len': len(seq),
+            'sequence': seq,
             'support': protein_hit_count.get(p_idx, 1),
         }
 

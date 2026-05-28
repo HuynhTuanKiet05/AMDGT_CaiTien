@@ -190,3 +190,55 @@ select:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0px 1000px #0a0a0f inset;
   transition: background-color 5000s ease-in-out 0s;
 }
+
+/* ============================================================================
+   Molecular Docking Visualization
+   ============================================================================ */
+
+/* 3D Protein Viewer Container */
+.protein-3d-viewer {
+  background: #030308;
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+}
+
+.protein-3d-viewer canvas {
+  border-radius: 16px;
+}
+
+/* Override 3Dmol.js default styles */
+.protein-3d-viewer > div {
+  border-radius: 16px !important;
+}
+
+/* Docking Canvas in cards */
+.docking-canvas {
+  max-width: 100%;
+  height: auto;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2));
+}
+
+/* Spin animation for 3D */
+@keyframes slow-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: slow-spin 8s linear infinite;
+}
+
+/* Chevron rotation for collapsible */
+.rotate-180 {
+  transform: rotate(180deg);
+}
+
+/* Docking card hover glow effect */
+.docking-card-glow {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.docking-card-glow:hover {
+  box-shadow: 0 0 30px -8px rgba(16, 185, 129, 0.15);
+}

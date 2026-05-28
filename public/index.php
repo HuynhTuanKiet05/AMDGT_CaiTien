@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 require_once __DIR__ . '/../app/services/PredictionService.php';
 require_login();
 
@@ -1145,6 +1145,32 @@ function render_prediction_graph(array $graph): string
         $targetProteinHints[(string) ($link['target'] ?? '')][] = (string) ($link['source'] ?? '');
     }
 
+    // Build docking pairs: drug ↔ protein connections for molecular docking cards
+    $dockingPairsMap = []; // keyed by protein id
+    $nodeById = [];
+    foreach (array_merge($sourceNodes, $targetNodes) as $n) {
+        $nodeById[(string) ($n['id'] ?? '')] = $n;
+    }
+    foreach ($proteinNodes as $pNode) {
+        $pId = (string) ($pNode['id'] ?? '');
+        $dockingPairsMap[$pId] = [];
+    }
+    foreach ($links as $link) {
+        $kind = (string) ($link['kind'] ?? '');
+        if ($kind !== 'source-protein') {
+            continue;
+        }
+        $drugNodeId = (string) ($link['source'] ?? '');
+        $proteinNodeId = (string) ($link['target'] ?? '');
+        $drug = $nodeById[$drugNodeId] ?? null;
+        if ($drug && isset($dockingPairsMap[$proteinNodeId])) {
+            $dockingPairsMap[$proteinNodeId][] = [
+                'drug' => $drug,
+                'score' => (float) ($link['score'] ?? 0),
+            ];
+        }
+    }
+
     $proteinOrderMap = [];
     foreach ($proteinNodes as $index => $node) {
         $proteinOrderMap[(string) ($node['id'] ?? '')] = $index;
@@ -1433,6 +1459,7 @@ function render_prediction_graph(array $graph): string
                        data-sequence="<?= e((string) ($node['sequence'] ?? '')) ?>"
                        onmouseenter="window.showSvgTooltip(this, event)"
                        onmouseleave="window.hideSvgTooltip(this)"
+                       onclick="if (window.selectProteinNode) window.selectProteinNode('<?= e((string) ($node['actual_id'] ?? '')) ?>')"
                        style="cursor: pointer; transition: all 220ms;">
                          <!-- Outer Hover Ring -->
                          <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(251,191,36,0.5)" stroke-width="1" />
@@ -1623,6 +1650,231 @@ function render_prediction_graph(array $graph): string
                         Fluorine
                     </span>
                 </div>
+            </section>
+        <?php endif; ?>
+
+        <?php if (!empty($proteinNodes)): ?>
+            <?php
+            // Serialize docking pairs for JS
+            $dockingPairsJson = [];
+            foreach ($proteinNodes as $pNode) {
+                $pId = (string) ($pNode['id'] ?? '');
+                $pairs = $dockingPairsMap[$pId] ?? [];
+                $pActualId = (string) ($pNode['actual_id'] ?? '');
+                $jsPairs = [];
+                foreach ($pairs as $pair) {
+                    $jsPairs[] = [
+                        'drug_id' => (string) ($pair['drug']['actual_id'] ?? $pair['drug']['id'] ?? ''),
+                        'drug_name' => (string) ($pair['drug']['label'] ?? ''),
+                        'drug_smiles' => (string) ($pair['drug']['smiles'] ?? ''),
+                        'score' => $pair['score'],
+                    ];
+                }
+                $dockingPairsJson[$pActualId] = $jsPairs;
+            }
+            ?>
+            <!-- Molecular Docking & Protein Analysis Dashboard -->
+            <section id="protein-chemical-section-<?= $graphInstance ?>" class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 overflow-hidden mt-6" style="width: 100%;">
+                <div class="absolute -top-32 -right-24 w-64 h-64 rounded-full bg-emerald-500/8 blur-[80px] pointer-events-none"></div>
+                <div class="absolute -bottom-32 -left-24 w-64 h-64 rounded-full bg-amber-500/8 blur-[80px] pointer-events-none"></div>
+                
+                <!-- Header -->
+                <div class="flex items-center justify-between mb-5 flex-wrap gap-4 relative z-10">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 grid place-items-center text-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+                            <i data-lucide="microscope" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-white font-bold text-base" style="font-family: 'Space Grotesk', sans-serif;">
+                                Molecular Docking & Phân tích chuỗi Protein
+                            </h4>
+                            <p class="text-white/40 text-[11.5px] mt-0.5" style="font-family: 'Inter', sans-serif;">
+                                Trực quan hóa cấu trúc 3D protein, tương tác thuốc–protein, và phân tích chuỗi axit amin
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-bold tracking-wider" style="font-family: 'IBM Plex Mono', monospace;">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981] animate-pulse"></span>
+                            3D VIEWER
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Protein Selector Tabs -->
+                <div class="flex items-center gap-2 flex-wrap mb-6 border-b border-white/5 pb-4 relative z-10" id="protein-selector-tabs-<?= $graphInstance ?>">
+                    <?php foreach ($proteinNodes as $index => $node): ?>
+                        <?php
+                        $actualId = (string) ($node['actual_id'] ?? $node['id'] ?? '');
+                        $label = (string) ($node['label'] ?? $actualId);
+                        $sequence = (string) ($node['sequence'] ?? '');
+                        ?>
+                        <button type="button" 
+                                onclick="window.selectProteinNodeOnWidget('<?= e($actualId) ?>', <?= $graphInstance ?>)" 
+                                data-protein-id="<?= e($actualId) ?>"
+                                data-sequence="<?= e($sequence) ?>"
+                                data-label="<?= e($label) ?>"
+                                class="protein-tab-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-xs font-semibold transition-all <?= $index === 0 ? 'bg-amber-500/15 border-amber-500/35 text-amber-300 shadow-[0_0_15px_-3px_rgba(245,158,11,0.3)] active-tab' : 'bg-white/[0.02] border-white/[0.08] text-white/60 hover:text-white hover:border-white/[0.16]' ?>">
+                            <span class="w-1.5 h-1.5 rounded-full <?= $index === 0 ? 'bg-amber-400 shadow-[0_0_6px_#f59e0b]' : 'bg-white/30' ?>"></span>
+                            <?= e($label) ?> (<?= e($actualId) ?>)
+                        </button>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Main Analysis Panel: Info + 3D Viewer -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
+                    <!-- Left: Chemical Info Cards -->
+                    <div class="lg:col-span-4 flex flex-col gap-4">
+                        <div class="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-5 flex flex-col gap-4">
+                            <div>
+                                <span class="text-white/40 text-[10px] font-bold tracking-widest uppercase" style="font-family: 'Inter', sans-serif;">PROTEIN ĐANG CHỌN</span>
+                                <h3 class="text-white font-bold text-xl mt-1 font-['Space_Grotesk']" id="selected-protein-title-<?= $graphInstance ?>">-</h3>
+                                <code class="text-amber-400 text-xs font-mono" id="selected-protein-code-<?= $graphInstance ?>">-</code>
+                            </div>
+
+                            <!-- Chemical Formula Display -->
+                            <div class="pt-4 border-t border-white/5">
+                                <span class="text-white/45 text-[10px] font-bold tracking-widest uppercase" style="font-family: 'Inter', sans-serif;">CÔNG THỨC HÓA HỌC</span>
+                                <div class="text-white font-bold text-lg mt-1 font-mono tracking-wider break-all leading-normal" id="chemical-formula-<?= $graphInstance ?>">
+                                    -
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 4 Quick Stats Cards -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3.5">
+                                <span class="text-white/40 text-[9px] font-bold tracking-widest uppercase block" style="font-family: 'Inter', sans-serif;">KHỐI LƯỢNG PHÂN TỬ</span>
+                                <span class="text-white font-bold text-base block mt-1 font-mono" id="stat-mw-<?= $graphInstance ?>">-</span>
+                            </div>
+                            <div class="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3.5">
+                                <span class="text-white/40 text-[9px] font-bold tracking-widest uppercase block" style="font-family: 'Inter', sans-serif;">ĐIỂM ĐẲNG ĐIỆN (pI)</span>
+                                <span class="text-white font-bold text-base block mt-1 font-mono" id="stat-pi-<?= $graphInstance ?>">-</span>
+                            </div>
+                            <div class="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3.5">
+                                <span class="text-white/40 text-[9px] font-bold tracking-widest uppercase block" style="font-family: 'Inter', sans-serif;">CHỈ SỐ GRAVY</span>
+                                <span class="text-white font-bold text-base block mt-1 font-mono" id="stat-gravy-<?= $graphInstance ?>">-</span>
+                            </div>
+                            <div class="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3.5">
+                                <span class="text-white/40 text-[9px] font-bold tracking-widest uppercase block" style="font-family: 'Inter', sans-serif;">CHỈ SỐ BẤT ỔN ĐỊNH</span>
+                                <span class="text-white font-bold text-base block mt-1 font-mono" id="stat-instability-<?= $graphInstance ?>">-</span>
+                            </div>
+                        </div>
+
+                        <!-- Binding Residues Panel -->
+                        <div class="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-4">
+                            <span class="text-white/45 text-[9px] font-bold tracking-widest uppercase block mb-3" style="font-family: 'Inter', sans-serif;">
+                                <i data-lucide="target" class="w-3 h-3 inline mr-1 text-rose-400"></i>
+                                BINDING RESIDUES (ƯỚC TÍNH)
+                            </span>
+                            <div class="flex flex-wrap gap-1.5" id="binding-residues-<?= $graphInstance ?>">
+                                <span class="text-white/30 text-[10px] font-mono">Chọn protein để xem...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: 3D Protein Viewer -->
+                    <div class="lg:col-span-8 flex flex-col gap-4">
+                        <div class="rounded-2xl bg-[#030308] border border-white/[0.08] overflow-hidden relative" style="min-height: 420px;">
+                            <!-- 3Dmol viewer container -->
+                            <div id="protein-3d-viewer-<?= $graphInstance ?>" class="protein-3d-viewer" style="width: 100%; height: 420px; position: relative;">
+                                <div class="absolute inset-0 flex flex-col items-center justify-center text-white/30 gap-3 z-10" id="viewer-placeholder-<?= $graphInstance ?>">
+                                    <div class="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.08] grid place-items-center">
+                                        <i data-lucide="rotate-3d" class="w-7 h-7 text-emerald-400/50"></i>
+                                    </div>
+                                    <span class="text-[11px] font-mono tracking-wider">ĐANG TẢI CẤU TRÚC 3D...</span>
+                                    <span class="text-[10px] text-white/20">Xoay, zoom, kéo để tương tác</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Floating info overlay -->
+                            <div class="absolute top-3 left-3 z-20 pointer-events-none">
+                                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/60 border border-white/[0.08] backdrop-blur-md">
+                                    <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]"></span>
+                                    <span class="text-white/70 text-[10px] font-mono font-bold tracking-wider" id="viewer-pdb-label-<?= $graphInstance ?>">PDB: —</span>
+                                </div>
+                            </div>
+                            <div class="absolute top-3 right-3 z-20 pointer-events-none">
+                                <div class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/60 border border-white/[0.08] backdrop-blur-md">
+                                    <span class="text-emerald-300 text-[10px] font-mono font-bold" id="viewer-energy-label-<?= $graphInstance ?>">— kcal/mol</span>
+                                </div>
+                            </div>
+                            <div class="absolute bottom-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
+                                <span class="text-white/30 text-[9px] font-mono">RIBBON · 3D MOLECULAR</span>
+                                <span class="text-white/30 text-[9px] font-mono" id="viewer-seq-len-<?= $graphInstance ?>">0 residues</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Physicochemical Distribution Bars -->
+                <div class="mt-6 rounded-2xl bg-white/[0.02] border border-white/[0.06] p-5 relative z-10">
+                    <div class="text-[10px] font-bold tracking-wider text-white/50 mb-4" style="font-family: 'Inter', sans-serif;">
+                        <i data-lucide="bar-chart-3" class="w-3 h-3 inline mr-1 text-amber-400"></i>
+                        CƠ CẤU PHÂN NHÓM HÓA LÝ
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-[10.5px]" style="font-family: 'Inter', sans-serif;">
+                        <div>
+                            <div class="flex justify-between text-yellow-300 font-semibold mb-1">
+                                <span>Kỵ nước (Hydrophobic)</span>
+                                <span id="pct-hydrophobic-<?= $graphInstance ?>">0%</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                                <div id="bar-hydrophobic-<?= $graphInstance ?>" class="h-full bg-yellow-400 shadow-[0_0_6px_#f59e0b] transition-all duration-700" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sky-300 font-semibold mb-1">
+                                <span>Cực tính (Polar)</span>
+                                <span id="pct-polar-<?= $graphInstance ?>">0%</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                                <div id="bar-polar-<?= $graphInstance ?>" class="h-full bg-sky-400 shadow-[0_0_6px_#0284c7] transition-all duration-700" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-cyan-300 font-semibold mb-1">
+                                <span>Tích điện dương (Basic)</span>
+                                <span id="pct-basic-<?= $graphInstance ?>">0%</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                                <div id="bar-basic-<?= $graphInstance ?>" class="h-full bg-cyan-400 shadow-[0_0_6px_#06b6d4] transition-all duration-700" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-rose-300 font-semibold mb-1">
+                                <span>Tích điện âm (Acidic)</span>
+                                <span id="pct-acidic-<?= $graphInstance ?>">0%</span>
+                            </div>
+                            <div class="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                                <div id="bar-acidic-<?= $graphInstance ?>" class="h-full bg-rose-400 shadow-[0_0_6px_#f43f5e] transition-all duration-700" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Collapsible Peptide Chain -->
+                <div class="mt-4 relative z-10">
+                    <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('.chevron-icon').classList.toggle('rotate-180');" class="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.12] transition-all text-left">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="dna" class="w-4 h-4 text-amber-400"></i>
+                            <span class="text-white/70 text-xs font-semibold" style="font-family: 'Space Grotesk', sans-serif;">Sơ đồ chuỗi Peptide 2D</span>
+                            <span class="text-white/30 text-[10px] font-mono" id="residue-count-label-<?= $graphInstance ?>">0 residues</span>
+                        </div>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-white/40 chevron-icon transition-transform duration-300"></i>
+                    </button>
+                    <div class="hidden mt-2 rounded-xl bg-[#05050a] border border-white/[0.06] p-4">
+                        <p class="text-white/30 text-[10px] mb-2" style="font-family: 'Inter', sans-serif;">Cuộn ngang để xem toàn bộ chuỗi amin. Di chuột qua hạt để xem tính chất.</p>
+                        <div class="overflow-x-auto overflow-y-hidden py-3 border border-white/[0.04] rounded-lg bg-black/25 scrollbar-thin scrollbar-thumb-white/10" style="min-height: 110px; width: 100%;">
+                            <div id="peptide-chain-container-<?= $graphInstance ?>" style="min-width: max-content;">
+                                <p class="text-white/30 text-center py-8 text-xs font-mono">Đang vẽ chuỗi peptide...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hidden data for JS -->
+                <script type="application/json" id="docking-pairs-data-<?= $graphInstance ?>"><?= json_encode($dockingPairsJson, JSON_UNESCAPED_UNICODE) ?></script>
             </section>
         <?php endif; ?>
         <!-- Hover tooltip moved to top of wrapper -->
@@ -1911,6 +2163,42 @@ $success = flash('success');
         .graph-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 9px; font-size: .68rem; font-weight: 700; }
         .graph-chip-source { background: rgba(96,165,250,.14); color: #93c5fd; }
         .graph-chip-target { background: rgba(34,197,94,.12); color: #86efac; }
+        /* Custom styles for Protein Chemical Sequence Dashboard */
+        .protein-tab-btn {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .protein-tab-btn:hover {
+            transform: translateY(-1px);
+        }
+        .protein-tab-btn.active-tab {
+            animation: pulse-glow 2s infinite alternate;
+        }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 12px -3px rgba(245,158,11,0.25); }
+            100% { box-shadow: 0 0 16px 0px rgba(245,158,11,0.45); }
+        }
+        .peptide-residue-circle {
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.2s ease;
+            cursor: pointer;
+        }
+        .peptide-residue-circle:hover {
+            transform: scale(1.22) translateY(-2px);
+            filter: brightness(1.2) drop-shadow(0 0 6px var(--glow-color));
+        }
+        .scrollbar-thin::-webkit-scrollbar {
+            height: 6px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 999px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 999px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.24);
+        }
         #modal-3d.is-open { display: flex !important; }
         .modal-3d-header { display: flex; align-items: center; justify-content: space-between; padding: .75rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
         .modal-3d-header h3 { margin: 0; font-size: 1rem; color: #e2e8f0; }
@@ -2322,6 +2610,8 @@ $success = flash('success');
 
 <!-- SmilesDrawer -->
 <script src="assets/js/smiles-drawer.min.js?v=1.0.1"></script>
+<!-- 3Dmol.js for protein 3D structure visualization -->
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
 <?php if ($hasGraphResults): ?>
 <script src="assets/js/three.min.js?v=1.0.1"></script>
 <script src="assets/js/three-spritetext.min.js?v=1.0.1"></script>
@@ -3179,6 +3469,880 @@ function init3D(wrapper) {
     void wrapper;
 <?php endif; ?>
 }
+
+// ==========================================
+// PROTEIN CHEMICAL & SEQUENCE VISUALIZATION
+// ==========================================
+
+// Mapping of 20 standard amino acids and their molecular properties
+const AMINO_ACID_DB = {
+    'A': { name: 'Alanine', code3: 'Ala', formula: 'C3H5NO', group: 'hydrophobic', hydropathy: 1.8, description: 'Kỵ nước, béo (Aliphatic)' },
+    'R': { name: 'Arginine', code3: 'Arg', formula: 'C6H12N4O', group: 'basic', hydropathy: -4.5, description: 'Tích điện dương, kiềm mạnh' },
+    'N': { name: 'Asparagine', code3: 'Asn', formula: 'C4H6N2O2', group: 'polar', hydropathy: -3.5, description: 'Cực tính, không tích điện' },
+    'D': { name: 'Aspartate', code3: 'Asp', formula: 'C4H5NO3', group: 'acidic', hydropathy: -3.5, description: 'Tích điện âm, axit (Aspartic acid)' },
+    'C': { name: 'Cysteine', code3: 'Cys', formula: 'C3H5NOS', group: 'polar', hydropathy: 2.5, description: 'Cực tính, chứa lưu huỳnh tạo cầu disulfua' },
+    'E': { name: 'Glutamate', code3: 'Glu', formula: 'C5H7NO3', group: 'acidic', hydropathy: -3.5, description: 'Tích điện âm, axit (Glutamic acid)' },
+    'Q': { name: 'Glutamine', code3: 'Gln', formula: 'C5H8N2O2', group: 'polar', hydropathy: -3.5, description: 'Cực tính, không tích điện' },
+    'G': { name: 'Glycine', code3: 'Gly', formula: 'C2H3NO', group: 'hydrophobic', hydropathy: -0.4, description: 'Kỵ nước nhẹ, axit amin nhỏ nhất linh hoạt' },
+    'H': { name: 'Histidine', code3: 'His', formula: 'C6H7N3O', group: 'basic', hydropathy: -3.2, description: 'Tích điện dương yếu, kiềm nhẹ' },
+    'I': { name: 'Isoleucine', code3: 'Ile', formula: 'C6H11NO', group: 'hydrophobic', hydropathy: 4.5, description: 'Kỵ nước, mạch nhánh béo' },
+    'L': { name: 'Leucine', code3: 'Leu', formula: 'C6H11NO', group: 'hydrophobic', hydropathy: 3.8, description: 'Kỵ nước, mạch nhánh béo dồi dào' },
+    'K': { name: 'Lysine', code3: 'Lys', formula: 'C6H12N2O', group: 'basic', hydropathy: -3.9, description: 'Tích điện dương, mạch nhánh bazơ' },
+    'M': { name: 'Methionine', code3: 'Met', formula: 'C5H9NOS', group: 'hydrophobic', hydropathy: 1.9, description: 'Kỵ nước, axit amin khởi đầu chứa lưu huỳnh' },
+    'F': { name: 'Phenylalanine', code3: 'Phe', formula: 'C9H9NO', group: 'hydrophobic', hydropathy: 2.8, description: 'Kỵ nước, mạch nhánh thơm (Aromatic)' },
+    'P': { name: 'Proline', code3: 'Pro', formula: 'C5H7NO', group: 'hydrophobic', hydropathy: -1.6, description: 'Kỵ nước, axit vòng imin gây bẻ gãy cấu trúc' },
+    'S': { name: 'Serine', code3: 'Ser', formula: 'C3H5NO2', group: 'polar', hydropathy: -0.8, description: 'Cực tính, chứa nhóm hydroxyl dễ phosphoryl hóa' },
+    'T': { name: 'Threonine', code3: 'Thr', formula: 'C4H7NO2', group: 'polar', hydropathy: -0.7, description: 'Cực tính, chứa nhóm hydroxyl' },
+    'W': { name: 'Tryptophan', code3: 'Trp', formula: 'C11H10N2O', group: 'hydrophobic', hydropathy: -0.9, description: 'Kỵ nước, thơm kích thước lớn nhất' },
+    'Y': { name: 'Tyrosine', code3: 'Tyr', formula: 'C9H9NO2', group: 'hydrophobic', hydropathy: -1.3, description: 'Kỵ nước thơm, chứa hydroxyl phân cực nhẹ' },
+    'V': { name: 'Valine', code3: 'Val', formula: 'C5H9NO', group: 'hydrophobic', hydropathy: 4.2, description: 'Kỵ nước, cấu trúc mạch nhánh béo' }
+};
+
+// Compact dipeptide instability weight values (partial list for realistic unstable indices)
+const instabWeights = {
+    'M': 1.0, 'A': 1.0, 'G': 1.0, 'L': 1.0, 'V': 1.0, 'I': 1.0, 'P': 20.0, 'K': 1.0, 'R': 1.0, 'H': 1.0, 
+    'F': 1.0, 'Y': 1.0, 'W': 1.0, 'D': 1.0, 'E': 1.0, 'N': 1.0, 'Q': 1.0, 'S': 1.0, 'T': 1.0, 'C': 1.0
+};
+
+// Helper: parse chemical formula string to atoms object
+function parseFormulaToAtoms(formulaStr) {
+    const atoms = { C: 0, H: 0, N: 0, O: 0, S: 0 };
+    const regex = /([C-Z])(\d*)/g;
+    let match;
+    while ((match = regex.exec(formulaStr)) !== null) {
+        const symbol = match[1];
+        const count = match[2] ? parseInt(match[2], 10) : 1;
+        if (symbol in atoms) {
+            atoms[symbol] += count;
+        }
+    }
+    return atoms;
+}
+
+// Client-side computation of protein chemical and sequence metrics
+function calculateProteinChemicalDetails(sequence) {
+    if (!sequence) {
+        return {
+            length: 0,
+            mw: "0.00 Da",
+            pi: "0.00",
+            gravy: "0.00",
+            instability: "0.00 (Stable)",
+            formula: "-",
+            distribution: { hydrophobic: 0, polar: 0, basic: 0, acidic: 0 }
+        };
+    }
+
+    const cleanSeq = sequence.toUpperCase().replace(/[^ARNDCEQGHILKMFPSTWYV]/g, '');
+    const L = cleanSeq.length;
+    if (L === 0) {
+        return calculateProteinChemicalDetails("");
+    }
+
+    // 1. Calculate Chemical Formula exactly: Sum(residues) + H2O
+    const totalAtoms = { C: 0, H: 0, N: 0, O: 0, S: 0 };
+    
+    // Amino acid counts for stats
+    const residueCounts = { hydrophobic: 0, polar: 0, basic: 0, acidic: 0 };
+    let totalHydropathy = 0;
+    
+    // Instability sum ( Guruprasad index approximation )
+    let instabilitySum = 0;
+
+    for (let i = 0; i < L; i++) {
+        const aa = cleanSeq[i];
+        const db = AMINO_ACID_DB[aa];
+        if (db) {
+            // Formula atoms sum
+            const aaAtoms = parseFormulaToAtoms(db.formula);
+            totalAtoms.C += aaAtoms.C;
+            totalAtoms.H += aaAtoms.H;
+            totalAtoms.N += aaAtoms.N;
+            totalAtoms.O += aaAtoms.O;
+            totalAtoms.S += aaAtoms.S;
+            
+            // Classification stats
+            residueCounts[db.group]++;
+            
+            // Hydropathy
+            totalHydropathy += db.hydropathy;
+            
+            // Instability
+            if (i < L - 1) {
+                const nextAa = cleanSeq[i+1];
+                // Pseudo instability coefficient weight (Guruprasad approximation)
+                let weight = 1.0;
+                if ((aa === 'P' || nextAa === 'P') && aa !== nextAa) weight = 20.0;
+                else if (aa === 'E' || aa === 'D' || nextAa === 'K' || nextAa === 'R') weight = -5.0;
+                else if (aa === 'W' || nextAa === 'W') weight = 15.0;
+                instabilitySum += (10.0 + weight);
+            }
+        }
+    }
+
+    // Add exactly 1 molecule of H2O for the ends
+    totalAtoms.H += 2;
+    totalAtoms.O += 1;
+
+    // Build chemical formula string C_x H_y N_z O_w S_v using subscript HTML tags
+    let formulaHtml = '';
+    if (totalAtoms.C > 0) formulaHtml += `C<sub>${totalAtoms.C}</sub>`;
+    if (totalAtoms.H > 0) formulaHtml += `H<sub>${totalAtoms.H}</sub>`;
+    if (totalAtoms.N > 0) formulaHtml += `N<sub>${totalAtoms.N}</sub>`;
+    if (totalAtoms.O > 0) formulaHtml += `O<sub>${totalAtoms.O}</sub>`;
+    if (totalAtoms.S > 0) formulaHtml += `S<sub>${totalAtoms.S}</sub>`;
+
+    // 2. Calculate Exact Molecular Weight: C=12.011, H=1.008, N=14.007, O=15.999, S=32.06
+    const mwFloat = (totalAtoms.C * 12.011) + 
+                    (totalAtoms.H * 1.008) + 
+                    (totalAtoms.N * 14.007) + 
+                    (totalAtoms.O * 15.999) + 
+                    (totalAtoms.S * 32.06);
+    const mwStr = mwFloat >= 1000 ? `${(mwFloat / 1000).toFixed(2)} kDa` : `${mwFloat.toFixed(2)} Da`;
+
+    // 3. GRAVY (Grand Average of Hydropathy)
+    const gravyVal = (totalHydropathy / L).toFixed(2);
+
+    // 4. Instability Index
+    const instabilityVal = L > 1 ? ((10.0 / L) * instabilitySum) : 0;
+    const instabilityStatus = instabilityVal < 40 ? `${instabilityVal.toFixed(2)} (Stable)` : `${instabilityVal.toFixed(2)} (Unstable)`;
+
+    // 5. Isoelectric Point (pI) estimation using henderson-hasselbalch charge solver
+    const numD = (cleanSeq.match(/D/g) || []).length;
+    const numE = (cleanSeq.match(/E/g) || []).length;
+    const numC = (cleanSeq.match(/C/g) || []).length;
+    const numY = (cleanSeq.match(/Y/g) || []).length;
+    const numH = (cleanSeq.match(/H/g) || []).length;
+    const numK = (cleanSeq.match(/K/g) || []).length;
+    const numR = (cleanSeq.match(/R/g) || []).length;
+
+    // Iterative binary search for pH where net charge = 0
+    let minPh = 0.0;
+    let maxPh = 14.0;
+    let pIVal = 7.0;
+    for (let iter = 0; iter < 15; iter++) {
+        pIVal = (minPh + maxPh) / 2.0;
+        
+        // Calculate net charge at this pH
+        let charge = 0.0;
+        
+        // Positive charges (Basic groups)
+        charge += 1.0 / (1.0 + Math.pow(10, pIVal - 8.2)); // N-term
+        charge += numH / (1.0 + Math.pow(10, pIVal - 6.0));
+        charge += numK / (1.0 + Math.pow(10, pIVal - 10.5));
+        charge += numR / (1.0 + Math.pow(10, pIVal - 12.5));
+        
+        // Negative charges (Acidic groups)
+        charge -= 1.0 / (1.0 + Math.pow(10, 3.65 - pIVal)); // C-term
+        charge -= numD / (1.0 + Math.pow(10, 3.9 - pIVal));
+        charge -= numE / (1.0 + Math.pow(10, 4.25 - pIVal));
+        charge -= numC / (1.0 + Math.pow(10, 8.3 - pIVal));
+        charge -= numY / (1.0 + Math.pow(10, 10.1 - pIVal));
+        
+        if (charge > 0) {
+            minPh = pIVal; // Net positive: pH is higher
+        } else {
+            maxPh = pIVal; // Net negative: pH is lower
+        }
+    }
+
+    const pctHydrophobic = Math.round((residueCounts.hydrophobic / L) * 100);
+    const pctPolar = Math.round((residueCounts.polar / L) * 100);
+    const pctBasic = Math.round((residueCounts.basic / L) * 100);
+    const pctAcidic = 100 - pctHydrophobic - pctPolar - pctBasic; // ensure sums to exactly 100%
+
+    return {
+        length: L,
+        mw: mwStr,
+        pi: pIVal.toFixed(2),
+        gravy: gravyVal,
+        instability: instabilityStatus,
+        formula: formulaHtml,
+        distribution: {
+            hydrophobic: Math.max(0, pctHydrophobic),
+            polar: Math.max(0, pctPolar),
+            basic: Math.max(0, pctBasic),
+            acidic: Math.max(0, pctAcidic)
+        }
+    };
+}
+
+// Injects the interactive 2D beads-on-a-string sequence visualization in SVG
+function renderPeptideChainSvg(containerId, sequence) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!sequence) {
+        container.innerHTML = '<p class="text-white/30 text-center py-8 text-xs font-mono">Không có dữ liệu chuỗi protein.</p>';
+        return;
+    }
+
+    const cleanSeq = sequence.toUpperCase().replace(/[^ARNDCEQGHILKMFPSTWYV]/g, '');
+    const L = cleanSeq.length;
+    if (L === 0) {
+        container.innerHTML = '<p class="text-white/30 text-center py-8 text-xs font-mono">Dữ liệu chuỗi không hợp lệ.</p>';
+        return;
+    }
+
+    // Setup coordinates: radius 16, diameter 32, gap 10, spacing 42
+    const beadRadius = 16;
+    const spacing = 44;
+    const height = 98;
+    const width = L * spacing + 12; // dynamic SVG width based on length
+
+    const groupColors = {
+        'hydrophobic': { glow: '#eab308', stroke: '#fbbf24', fill: 'rgba(251,191,36,0.1)', text: '#fef08a' }, // Amber/Yellow
+        'polar': { glow: '#0284c7', stroke: '#38bdf8', fill: 'rgba(56,189,248,0.1)', text: '#bae6fd' },       // Light Blue
+        'basic': { glow: '#06b6d4', stroke: '#22d3ee', fill: 'rgba(34,211,238,0.15)', text: '#cffafe' },      // Neon Cyan
+        'acidic': { glow: '#f43f5e', stroke: '#fb7185', fill: 'rgba(251,113,133,0.15)', text: '#ffe4e6' }      // Rose/Red
+    };
+
+    let svgHtml = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" style="display: block;">
+        <defs>
+            <filter id="bead-glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="3" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+        </defs>
+    `;
+
+    // 1. Draw bond lines connecting all residues
+    for (let i = 0; i < L - 1; i++) {
+        const x1 = i * spacing + spacing / 2 + 8;
+        const x2 = (i + 1) * spacing + spacing / 2 + 8;
+        const y = height / 2;
+        svgHtml += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="rgba(255,255,255,0.12)" stroke-width="2" />`;
+    }
+
+    // 2. Draw amino acid circles and labels
+    for (let i = 0; i < L; i++) {
+        const aa = cleanSeq[i];
+        const db = AMINO_ACID_DB[aa] || { name: 'Unknown', code3: 'Unk', formula: '-', group: 'polar', hydropathy: 0, description: '-' };
+        const colors = groupColors[db.group] || groupColors.polar;
+        const cx = i * spacing + spacing / 2 + 8;
+        const cy = height / 2;
+        
+        const tooltipId = i + 1;
+
+        // Custom hovering SVG popover tooltip trigger onmouseenter/onmouseleave
+        const escapeQuote = (str) => String(str).replace(/'/g, "\\'");
+        const mouseEnterJs = `window.showPeptideTooltip(this, event, '${escapeQuote(db.name)}', '${escapeQuote(db.code3)}', '${escapeQuote(aa)}', '${escapeQuote(db.formula)}', '${escapeQuote(db.description)}', ${tooltipId})`;
+        const mouseLeaveJs = `window.hidePeptideTooltip(this)`;
+
+        svgHtml += `
+        <g class="peptide-residue-circle" 
+           onmouseenter="${mouseEnterJs}" 
+           onmouseleave="${mouseLeaveJs}" 
+           style="--glow-color: ${colors.glow}; transition: all 200ms;"
+           transform="translate(0, 0)">
+            
+            <!-- Index indicator label above circle for every 5th residue -->
+            ${(i + 1) % 5 === 0 || i === 0 ? `
+            <text x="${cx}" y="20" text-anchor="middle" fill="rgba(255,255,255,0.3)" style="font-family: 'IBM Plex Mono', monospace; font-size: 8px;">${i + 1}</text>
+            ` : ''}
+
+            <!-- Inner Circle Bead -->
+            <circle cx="${cx}" cy="${cy}" r="${beadRadius}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="1.5" />
+            
+            <!-- 1-letter abbreviation -->
+            <text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="${colors.text}" style="font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; pointer-events: none;">${aa}</text>
+        </g>`;
+    }
+
+    svgHtml += `</svg>`;
+    container.innerHTML = svgHtml;
+}
+
+// Interactive peptide tooltip renderer
+window.showPeptideTooltip = function(element, event, name, code3, aa, formula, description, index) {
+    const wrapper = element.closest('.graph-2d-wrapper');
+    if (!wrapper) return;
+    
+    const tooltip = wrapper.querySelector('.graph-tooltip');
+    if (!tooltip) return;
+
+    const wrapperBounds = wrapper.getBoundingClientRect();
+    let relativeLeft = event.clientX - wrapperBounds.left + 15;
+    let relativeTop = event.clientY - wrapperBounds.top - 20;
+
+    // Clamp inside borders
+    if (relativeLeft + 250 > wrapperBounds.width) {
+        relativeLeft = event.clientX - wrapperBounds.left - 260;
+    }
+
+    tooltip.style.left = `${relativeLeft}px`;
+    tooltip.style.top = `${Math.max(8, relativeTop)}px`;
+    tooltip.style.display = 'block';
+
+    tooltip.className = 'graph-tooltip absolute z-50 rounded-2xl bg-[#070b13]/96 border border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-md p-4';
+    tooltip.innerHTML = `
+        <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-4">
+                <span class="px-2.5 py-0.5 rounded-full bg-amber-950/40 border border-amber-500/20 text-amber-400 text-[10px] font-bold font-mono">RESIDUE #${index}</span>
+                <span class="text-white/40 font-mono text-[11px] font-bold">${code3} / ${aa}</span>
+            </div>
+            <div>
+                <h4 class="text-white font-bold font-['Space_Grotesk'] text-[14.5px] leading-snug">${name}</h4>
+                <div class="text-white/40 text-[9.5px] mt-0.5 font-mono">Gốc tự do: ${formula}</div>
+            </div>
+            <div class="text-white/60 text-[10.5px] mt-1 border-t border-white/5 pt-2 leading-relaxed">${description}</div>
+        </div>
+    `;
+};
+
+window.hidePeptideTooltip = function(element) {
+    const wrapper = element.closest('.graph-2d-wrapper');
+    if (!wrapper) return;
+    const tooltip = wrapper.querySelector('.graph-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+};
+// Main function triggered when selecting a protein on the dashboard widget
+// ============================================================================
+// Molecular Docking Visualization — 3D Viewer & Docking Cards
+// ============================================================================
+
+// Cache for 3Dmol viewer instances keyed by instanceId
+const _proteinViewers = {};
+// Cache for PDB ID lookups keyed by UniProt ID
+const _pdbCache = {};
+
+// Known UniProt → PDB mappings (common proteins from our dataset)
+const UNIPROT_PDB_MAP = {
+    'P22303': '4EY5', 'P06276': '3I06', 'P36544': '5KDO', 'O15244': '6QBG',
+    'P11388': '6ZY5', 'P00734': '1PPB', 'P07550': '2RH1', 'P14416': '6CM4',
+    'P23975': '4M48', 'P28223': '6WHA', 'P08684': '3NXU', 'P10635': '1N6H',
+    'P04150': '1M2Z', 'P37231': '1K74', 'Q16637': '2BRR', 'P10275': '1E3G',
+    'P03372': '1ERE', 'P11511': '3EQM', 'Q07869': '3TRG', 'P00519': '2HYY',
+};
+
+// Fetch PDB ID from UniProt REST API
+async function fetchPdbIdFromUniprot(uniprotId) {
+    if (_pdbCache[uniprotId] !== undefined) return _pdbCache[uniprotId];
+    
+    // Check local mapping first
+    if (UNIPROT_PDB_MAP[uniprotId]) {
+        _pdbCache[uniprotId] = UNIPROT_PDB_MAP[uniprotId];
+        return UNIPROT_PDB_MAP[uniprotId];
+    }
+    
+    try {
+        const resp = await fetch(`https://rest.uniprot.org/uniprotkb/${uniprotId}?fields=xref_pdb&format=json`);
+        if (!resp.ok) throw new Error('UniProt API error');
+        const data = await resp.json();
+        const pdbRefs = (data.uniProtKBCrossReferences || []).filter(x => x.database === 'PDB');
+        const pdbId = pdbRefs.length > 0 ? pdbRefs[0].id : null;
+        _pdbCache[uniprotId] = pdbId;
+        return pdbId;
+    } catch (err) {
+        console.warn('PDB lookup failed for', uniprotId, err);
+        _pdbCache[uniprotId] = null;
+        return null;
+    }
+}
+
+// Initialize or update 3Dmol viewer for a protein
+async function initProtein3DViewer(instanceId, uniprotId, sequence) {
+    const viewerDiv = document.getElementById(`protein-3d-viewer-${instanceId}`);
+    const placeholder = document.getElementById(`viewer-placeholder-${instanceId}`);
+    const pdbLabel = document.getElementById(`viewer-pdb-label-${instanceId}`);
+    const seqLenLabel = document.getElementById(`viewer-seq-len-${instanceId}`);
+    
+    if (!viewerDiv) return;
+    
+    const seqLen = sequence ? sequence.replace(/[^ARNDCEQGHILKMFPSTWYV]/gi, '').length : 0;
+    if (seqLenLabel) seqLenLabel.textContent = `${seqLen} residues`;
+    
+    // Show loading
+    if (placeholder) {
+        placeholder.style.display = 'flex';
+        placeholder.querySelector('span').textContent = 'ĐANG TẢI CẤU TRÚC 3D...';
+    }
+    
+    // Try to find PDB ID
+    const pdbId = await fetchPdbIdFromUniprot(uniprotId);
+    
+    if (pdbLabel) pdbLabel.textContent = pdbId ? `PDB: ${pdbId}` : `UniProt: ${uniprotId}`;
+    
+    // Check if 3Dmol is available
+    if (!window.$3Dmol) {
+        console.warn('3Dmol.js not loaded');
+        if (placeholder) {
+            placeholder.querySelector('span').textContent = 'Thư viện 3D chưa được tải';
+        }
+        renderFallback3D(viewerDiv, placeholder, uniprotId, seqLen);
+        return;
+    }
+    
+    if (!pdbId) {
+        renderFallback3D(viewerDiv, placeholder, uniprotId, seqLen);
+        return;
+    }
+    
+    try {
+        // Clear previous viewer
+        if (_proteinViewers[instanceId]) {
+            _proteinViewers[instanceId] = null;
+        }
+        
+        // Clear viewer div content but keep placeholder for now
+        const children = Array.from(viewerDiv.children);
+        children.forEach(child => {
+            if (child !== placeholder) child.remove();
+        });
+        
+        // Create viewer
+        const viewer = $3Dmol.createViewer(viewerDiv, {
+            backgroundColor: '#030308',
+            antialias: true,
+            cartoonQuality: 8,
+        });
+        
+        _proteinViewers[instanceId] = viewer;
+        
+        // Fetch PDB and render
+        const pdbUrl = `https://files.rcsb.org/download/${pdbId}.pdb`;
+        const pdbResp = await fetch(pdbUrl);
+        if (!pdbResp.ok) throw new Error('PDB fetch failed');
+        const pdbData = await pdbResp.text();
+        
+        viewer.addModel(pdbData, 'pdb');
+        
+        // Clean cartoon/ribbon style — single protein structure only
+        viewer.setStyle({}, {
+            cartoon: {
+                color: 'spectrum',
+                opacity: 0.92,
+                thickness: 0.35,
+                arrows: true,
+            }
+        });
+        
+        // Highlight only top 5 binding residues with subtle sticks
+        const bindingResidues = estimateBindingResidues(sequence);
+        const topResidues = bindingResidues.slice(0, 5);
+        if (topResidues.length > 0) {
+            const residueNums = topResidues.map(r => r.position);
+            viewer.addStyle(
+                { resi: residueNums },
+                {
+                    stick: {
+                        colorscheme: 'greenCarbon',
+                        radius: 0.12,
+                        opacity: 0.85,
+                    }
+                }
+            );
+            
+            // Add labels for top 4 residues only
+            topResidues.slice(0, 4).forEach(res => {
+                viewer.addLabel(res.label, {
+                    position: { resi: res.position },
+                    fontColor: '#ffffff',
+                    backgroundColor: 'rgba(0,0,0,0.65)',
+                    backgroundOpacity: 0.7,
+                    fontSize: 10,
+                    font: 'IBM Plex Mono',
+                    borderColor: '#10b981',
+                    borderThickness: 1,
+                    showBackground: true,
+                });
+            });
+        }
+        
+        viewer.zoomTo();
+        viewer.spin('y', 0.4);
+        viewer.render();
+        
+        // Hide placeholder
+        if (placeholder) placeholder.style.display = 'none';
+        
+    } catch (err) {
+        console.warn('3Dmol render error:', err);
+        renderFallback3D(viewerDiv, placeholder, uniprotId, seqLen);
+    }
+}
+
+// Fallback when PDB not available
+function renderFallback3D(viewerDiv, placeholder, uniprotId, seqLen) {
+    if (placeholder) {
+        placeholder.innerHTML = `
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 grid place-items-center mb-3">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(16,185,129,0.5)" stroke-width="1.5">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <span class="text-[11px] font-mono tracking-wider text-white/40">${uniprotId} · ${seqLen} residues</span>
+            <span class="text-[10px] text-white/20">Cấu trúc PDB không khả dụng — hiển thị dạng schematic</span>
+            <div class="mt-4 flex gap-1">
+                ${generateSchematicProteinSVG(seqLen)}
+            </div>
+        `;
+        placeholder.style.display = 'flex';
+    }
+}
+
+// Generate a mini schematic protein visualization
+function generateSchematicProteinSVG(seqLen) {
+    const segments = Math.min(12, Math.max(4, Math.floor(seqLen / 50)));
+    const w = 300, h = 60;
+    let paths = '';
+    const colors = ['#10b981', '#06b6d4', '#f59e0b', '#f43f5e', '#8b5cf6'];
+    
+    for (let i = 0; i < segments; i++) {
+        const x1 = (i / segments) * w + 10;
+        const x2 = ((i + 1) / segments) * w + 10;
+        const cy = h / 2 + Math.sin(i * 0.8) * 12;
+        const color = colors[i % colors.length];
+        // Helix-like path
+        if (i % 3 === 0) {
+            paths += `<rect x="${x1}" y="${cy - 8}" width="${x2 - x1 - 4}" height="16" rx="8" fill="${color}" opacity="0.3"/>`;
+        } else {
+            paths += `<line x1="${x1}" y1="${cy}" x2="${x2}" y2="${h / 2 + Math.sin((i + 1) * 0.8) * 12}" stroke="${color}" stroke-width="3" opacity="0.4" stroke-linecap="round"/>`;
+        }
+    }
+    return `<svg width="${w + 20}" height="${h}" viewBox="0 0 ${w + 20} ${h}">${paths}</svg>`;
+}
+
+// Estimate binding residues from sequence analysis
+function estimateBindingResidues(sequence) {
+    if (!sequence) return [];
+    const cleanSeq = sequence.toUpperCase().replace(/[^ARNDCEQGHILKMFPSTWYV]/g, '');
+    const L = cleanSeq.length;
+    if (L < 10) return [];
+    
+    const residues = [];
+    const threeLetterCode = {
+        'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
+        'E': 'GLU', 'Q': 'GLN', 'G': 'GLY', 'H': 'HIS', 'I': 'ILE',
+        'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
+        'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL',
+    };
+    
+    // Strategy: Find clusters of charged/polar residues likely near active sites
+    const chargedPolar = new Set(['D', 'E', 'H', 'K', 'R', 'N', 'Q', 'S', 'T', 'C', 'Y']);
+    const catalytic = new Set(['H', 'D', 'S', 'C', 'E', 'K']);
+    
+    // Sliding window to find high-charge-density regions
+    const windowSize = 7;
+    const scores = [];
+    for (let i = 0; i <= L - windowSize; i++) {
+        let score = 0;
+        for (let j = 0; j < windowSize; j++) {
+            const aa = cleanSeq[i + j];
+            if (chargedPolar.has(aa)) score += 2;
+            if (catalytic.has(aa)) score += 3;
+        }
+        scores.push({ pos: i + Math.floor(windowSize / 2), score });
+    }
+    
+    // Sort by score, pick top regions
+    scores.sort((a, b) => b.score - a.score);
+    
+    const selectedPositions = new Set();
+    for (const s of scores) {
+        if (selectedPositions.size >= 12) break;
+        // Avoid clustering: skip if too close to already selected
+        let tooClose = false;
+        for (const p of selectedPositions) {
+            if (Math.abs(p - s.pos) < 8) { tooClose = true; break; }
+        }
+        if (!tooClose && s.score > windowSize) {
+            selectedPositions.add(s.pos);
+            const aa = cleanSeq[s.pos];
+            residues.push({
+                position: s.pos + 1, // 1-indexed for PDB
+                label: `${threeLetterCode[aa] || aa}-${s.pos + 1}`,
+                residue: aa,
+                score: s.score,
+            });
+        }
+    }
+    
+    // Sort by position
+    residues.sort((a, b) => a.position - b.position);
+    
+    return residues;
+}
+
+// Render docking cards for drug-protein pairs
+function renderDockingCards(instanceId, proteinId, proteinLabel, sequence) {
+    const grid = document.getElementById(`docking-cards-grid-${instanceId}`);
+    if (!grid) return;
+    
+    // Get docking pairs data
+    const dataEl = document.getElementById(`docking-pairs-data-${instanceId}`);
+    if (!dataEl) {
+        grid.innerHTML = '<div class="col-span-full text-center py-6 text-white/25 text-xs font-mono">Không có dữ liệu docking pairs.</div>';
+        return;
+    }
+    
+    let allPairs = {};
+    try {
+        allPairs = JSON.parse(dataEl.textContent || '{}');
+    } catch (e) {
+        grid.innerHTML = '<div class="col-span-full text-center py-6 text-white/25 text-xs font-mono">Lỗi đọc dữ liệu.</div>';
+        return;
+    }
+    
+    const pairs = allPairs[proteinId] || [];
+    if (pairs.length === 0) {
+        grid.innerHTML = '<div class="col-span-full text-center py-6 text-white/25 text-xs font-mono">Không có liên kết thuốc–protein cho protein này.</div>';
+        return;
+    }
+    
+    // Get binding residues for display
+    const bindingResidues = estimateBindingResidues(sequence);
+    const topResidues = bindingResidues.slice(0, 6);
+    
+    // Render max 4 cards
+    const displayPairs = pairs.slice(0, 4);
+    let html = '';
+    
+    displayPairs.forEach((pair, idx) => {
+        const drugId = pair.drug_id || '';
+        const drugName = pair.drug_name || drugId;
+        const drugSmiles = pair.drug_smiles || '';
+        const score = pair.score || 0;
+        const bindingEnergy = (-10 * score).toFixed(1);
+        const canvasId = `docking-smiles-${instanceId}-${idx}`;
+        
+        // Pick 2-3 random residues for this card
+        const cardResidues = topResidues.slice(idx % 2 === 0 ? 0 : 2, idx % 2 === 0 ? 3 : 5);
+        
+        html += `
+        <div class="group relative rounded-2xl bg-white/[0.02] border border-white/[0.08] overflow-hidden hover:border-emerald-500/25 transition-all duration-300">
+            <!-- Glow effects -->
+            <div class="absolute -top-16 -right-12 w-32 h-32 rounded-full bg-emerald-500/8 blur-2xl pointer-events-none group-hover:bg-emerald-500/15 transition-all"></div>
+            <div class="absolute -bottom-16 -left-12 w-32 h-32 rounded-full bg-purple-500/5 blur-2xl pointer-events-none"></div>
+            
+            <!-- Card Header -->
+            <div class="relative p-4 pb-3 border-b border-white/[0.05]">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-[9px] font-bold tracking-wider" style="font-family: 'IBM Plex Mono', monospace;">
+                            <span class="w-1 h-1 rounded-full bg-cyan-400"></span>
+                            ${drugId}
+                        </span>
+                    </div>
+                    <span class="text-emerald-300 text-[10px] font-mono font-bold">${bindingEnergy} kcal/mol</span>
+                </div>
+                <div class="text-white font-bold text-sm truncate" style="font-family: 'Space Grotesk', sans-serif;">${drugName}</div>
+                <div class="text-white/40 text-[10px] mt-0.5" style="font-family: 'Inter', sans-serif;">→ ${proteinLabel} (${proteinId})</div>
+            </div>
+            
+            <!-- 2D Drug Structure -->
+            <div class="relative p-3">
+                <div class="aspect-[5/3] rounded-xl bg-gradient-to-br from-blue-500/5 via-transparent to-purple-500/5 border border-white/[0.05] grid place-items-center overflow-hidden" style="min-height: 120px;">
+                    ${drugSmiles
+                        ? `<canvas id="${canvasId}" class="molecule-canvas docking-canvas" width="260" height="156" data-smiles="${drugSmiles.replace(/"/g, '&quot;')}"></canvas>`
+                        : '<span class="text-white/20 text-[10px] font-mono">SMILES không khả dụng</span>'
+                    }
+                </div>
+            </div>
+            
+            <!-- Binding Residues -->
+            <div class="px-4 pb-3">
+                <span class="text-white/35 text-[8px] font-bold tracking-widest uppercase block mb-1.5" style="font-family: 'Inter', sans-serif;">BINDING RESIDUES</span>
+                <div class="flex flex-wrap gap-1">
+                    ${cardResidues.map(r => `
+                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[9px] font-mono font-bold">
+                            ${r.label}
+                        </span>
+                    `).join('')}
+                </div>
+            </div>
+            
+            <!-- Score Bar -->
+            <div class="px-4 pb-4">
+                <div class="flex items-center justify-between text-[9px] mb-1">
+                    <span class="text-white/35 font-semibold">BINDING AFFINITY</span>
+                    <span class="text-emerald-300 font-mono font-bold">${(score * 100).toFixed(1)}%</span>
+                </div>
+                <div class="h-1 rounded-full bg-white/[0.04] overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 shadow-[0_0_6px_rgba(16,185,129,0.6)] transition-all duration-700" style="width: ${(score * 100).toFixed(0)}%"></div>
+                </div>
+            </div>
+        </div>`;
+    });
+    
+    grid.innerHTML = html;
+    
+    // Render SMILES drawings on new canvases after DOM update
+    setTimeout(() => {
+        displayPairs.forEach((pair, idx) => {
+            const canvasId = `docking-smiles-${instanceId}-${idx}`;
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !canvas.dataset.smiles || !window.SmilesDrawer) return;
+            
+            const drawer = createSmilesDrawer(canvas.width, canvas.height);
+            if (!drawer) return;
+            
+            SmilesDrawer.parse(canvas.dataset.smiles, (tree) => {
+                drawer.draw(tree, canvas, 'dark');
+            }, (err) => {
+                console.warn('SMILES parse error for docking card:', err);
+            });
+        });
+    }, 100);
+}
+
+// Render binding residue badges in the sidebar panel
+function renderBindingResiduesBadges(instanceId, sequence) {
+    const container = document.getElementById(`binding-residues-${instanceId}`);
+    if (!container) return;
+    
+    const residues = estimateBindingResidues(sequence);
+    if (residues.length === 0) {
+        container.innerHTML = '<span class="text-white/25 text-[10px] font-mono">Không tìm thấy vùng active site ước tính</span>';
+        return;
+    }
+    
+    const colors = [
+        { bg: 'bg-rose-500/10', border: 'border-rose-500/20', text: 'text-rose-300' },
+        { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-300' },
+        { bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', text: 'text-cyan-300' },
+        { bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', text: 'text-emerald-300' },
+        { bg: 'bg-purple-500/10', border: 'border-purple-500/20', text: 'text-purple-300' },
+    ];
+    
+    container.innerHTML = residues.map((r, i) => {
+        const c = colors[i % colors.length];
+        return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${c.bg} border ${c.border} ${c.text} text-[9px] font-mono font-bold transition-all hover:scale-105">${r.label}</span>`;
+    }).join('');
+}
+
+window.selectProteinNodeOnWidget = function(proteinId, instanceId) {
+    const tabsContainer = document.getElementById(`protein-selector-tabs-${instanceId}`);
+    if (!tabsContainer) return;
+
+    // Remove active tab style from all buttons
+    const buttons = tabsContainer.querySelectorAll('.protein-tab-btn');
+    let activeBtn = null;
+    buttons.forEach((btn) => {
+        if (btn.getAttribute('data-protein-id') === proteinId) {
+            activeBtn = btn;
+            btn.classList.add('bg-amber-500/15', 'border-amber-500/35', 'text-amber-300', 'shadow-[0_0_15px_-3px_rgba(245,158,11,0.3)]', 'active-tab');
+            btn.classList.remove('bg-white/[0.02]', 'border-white/[0.08]', 'text-white/60');
+            const dot = btn.querySelector('span');
+            if (dot) {
+                dot.classList.add('bg-amber-400', 'shadow-[0_0_6px_#f59e0b]');
+                dot.classList.remove('bg-white/30');
+            }
+        } else {
+            btn.classList.remove('bg-amber-500/15', 'border-amber-500/35', 'text-amber-300', 'shadow-[0_0_15px_-3px_rgba(245,158,11,0.3)]', 'active-tab');
+            btn.classList.add('bg-white/[0.02]', 'border-white/[0.08]', 'text-white/60');
+            const dot = btn.querySelector('span');
+            if (dot) {
+                dot.classList.remove('bg-amber-400', 'shadow-[0_0_6px_#f59e0b]');
+                dot.classList.add('bg-white/30');
+            }
+        }
+    });
+
+    if (!activeBtn) return;
+
+    // Fetch sequence and labels from dataset attributes
+    const sequence = activeBtn.getAttribute('data-sequence') || '';
+    const label = activeBtn.getAttribute('data-label') || proteinId;
+
+    // Compute chemical statistics on Client-side!
+    const stats = calculateProteinChemicalDetails(sequence);
+
+    // Injects statistical info
+    document.getElementById(`selected-protein-title-${instanceId}`).textContent = label;
+    document.getElementById(`selected-protein-code-${instanceId}`).textContent = proteinId;
+    document.getElementById(`chemical-formula-${instanceId}`).innerHTML = stats.formula;
+    
+    document.getElementById(`stat-mw-${instanceId}`).textContent = stats.mw;
+    document.getElementById(`stat-pi-${instanceId}`).textContent = stats.pi;
+    document.getElementById(`stat-gravy-${instanceId}`).textContent = stats.gravy;
+    document.getElementById(`stat-instability-${instanceId}`).textContent = stats.instability;
+
+    document.getElementById(`residue-count-label-${instanceId}`).textContent = `${stats.length} residues`;
+
+    // Render interactive SVG beads-on-a-string Peptide visualization
+    renderPeptideChainSvg(`peptide-chain-container-${instanceId}`, sequence);
+
+    // Update functional classification percentage bars with premium CSS transitions
+    document.getElementById(`pct-hydrophobic-${instanceId}`).textContent = `${stats.distribution.hydrophobic}%`;
+    document.getElementById(`bar-hydrophobic-${instanceId}`).style.width = `${stats.distribution.hydrophobic}%`;
+
+    document.getElementById(`pct-polar-${instanceId}`).textContent = `${stats.distribution.polar}%`;
+    document.getElementById(`bar-polar-${instanceId}`).style.width = `${stats.distribution.polar}%`;
+
+    document.getElementById(`pct-basic-${instanceId}`).textContent = `${stats.distribution.basic}%`;
+    document.getElementById(`bar-basic-${instanceId}`).style.width = `${stats.distribution.basic}%`;
+
+    document.getElementById(`pct-acidic-${instanceId}`).textContent = `${stats.distribution.acidic}%`;
+    document.getElementById(`bar-acidic-${instanceId}`).style.width = `${stats.distribution.acidic}%`;
+
+    // === Molecular Docking Visualization Updates ===
+    
+    // Update binding energy label (average from docking pairs)
+    const energyLabel = document.getElementById(`viewer-energy-label-${instanceId}`);
+    if (energyLabel) {
+        const dataEl = document.getElementById(`docking-pairs-data-${instanceId}`);
+        let avgEnergy = '—';
+        try {
+            const allPairs = JSON.parse(dataEl?.textContent || '{}');
+            const pairs = allPairs[proteinId] || [];
+            if (pairs.length > 0) {
+                const avgScore = pairs.reduce((sum, p) => sum + (p.score || 0), 0) / pairs.length;
+                avgEnergy = (-10 * avgScore).toFixed(1);
+            }
+        } catch (e) {}
+        energyLabel.textContent = `${avgEnergy} kcal/mol`;
+    }
+    
+    // Render binding residue badges in sidebar
+    renderBindingResiduesBadges(instanceId, sequence);
+    
+    // Initialize 3D protein viewer (async - runs in background)
+    initProtein3DViewer(instanceId, proteinId, sequence);
+};
+
+// Global scroll and auto-select hook triggered when click protein nodes in SVG network
+window.selectProteinNode = function(proteinId) {
+    // Traverse active dashboard sections in page
+    const widgets = document.querySelectorAll('[id^="protein-chemical-section-"]');
+    if (widgets.length === 0) return;
+
+    // 1. Smooth scroll to first active chemical dashboard section
+    const targetSection = widgets[0];
+    targetSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // 2. Select protein and trigger animations
+    widgets.forEach((widget) => {
+        const idParts = widget.id.split('-');
+        const instanceId = parseInt(idParts[idParts.length - 1], 10);
+        if (!isNaN(instanceId)) {
+            window.selectProteinNodeOnWidget(proteinId, instanceId);
+        }
+    });
+};
+
+// Auto-run on page load for all active widgets in page
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        const widgets = document.querySelectorAll('[id^="protein-chemical-section-"]');
+        widgets.forEach((widget) => {
+            const idParts = widget.id.split('-');
+            const instanceId = parseInt(idParts[idParts.length - 1], 10);
+            const tabsContainer = document.getElementById(`protein-selector-tabs-${instanceId}`);
+            if (tabsContainer) {
+                const firstTab = tabsContainer.querySelector('.protein-tab-btn');
+                if (firstTab) {
+                    const firstProteinId = firstTab.getAttribute('data-protein-id');
+                    if (firstProteinId) {
+                        window.selectProteinNodeOnWidget(firstProteinId, instanceId);
+                    }
+                }
+            }
+        });
+    }, 250);
+});
 </script>
 </body>
 </html>
