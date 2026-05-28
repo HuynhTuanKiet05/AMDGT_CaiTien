@@ -165,3 +165,31 @@ function count_csv_lines(string $path): int
     fclose($handle);
     return $rows;
 }
+
+function count_csv_rows_robust(string $path, bool $hasHeader = true): int
+{
+    if (!is_file($path)) {
+        return 0;
+    }
+
+    $handle = @fopen($path, 'r');
+    if ($handle === false) {
+        return 0;
+    }
+
+    $count = 0;
+    if ($hasHeader) {
+        @fgetcsv($handle); // skip header line
+    }
+
+    while (($row = @fgetcsv($handle)) !== false) {
+        // Only count if it's a valid row (not completely empty)
+        if ($row !== null && $row !== [null]) {
+            $count++;
+        }
+    }
+
+    fclose($handle);
+    return $count;
+}
+

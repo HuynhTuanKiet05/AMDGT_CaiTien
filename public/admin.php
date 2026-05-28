@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 require_once __DIR__ . '/../app/bootstrap.php';
 require_admin();
 
@@ -8,24 +8,40 @@ if (!in_array($selectedDataset, ['B', 'C', 'F'], true)) {
     $selectedDataset = 'C';
 }
 
-$dataDir = realpath(__DIR__ . '/../AMDGT/data/' . $selectedDataset . '-dataset') ?: '';
-
-/* ── Đếm thực thể theo dataset ── */
-function count_entities(string $file, bool $hasHeader = true): int
-{
-    if (!is_file($file)) return 0;
-    $n = count_csv_lines($file);
-    return max(0, $hasHeader ? $n - 1 : $n);
+$datasetsInfo = [];
+foreach (['B', 'C', 'F'] as $ds) {
+    $dsDir = realpath(__DIR__ . '/../AMDGT/data/' . $ds . '-dataset') ?: '';
+    
+    if ($dsDir !== '') {
+        $drugs = count_csv_rows_robust($dsDir . '/DrugInformation.csv', true);
+        $diseases = count_csv_rows_robust($dsDir . '/DiseaseFeature.csv', false); // DiseaseFeature.csv không có header
+        $proteins = count_csv_rows_robust($dsDir . '/ProteinInformation.csv', true);
+        
+        $drugDisease = count_csv_rows_robust($dsDir . '/DrugDiseaseAssociationNumber.csv', true);
+        $drugProtein = count_csv_rows_robust($dsDir . '/DrugProteinAssociationNumber.csv', true);
+        $diseaseProtein = count_csv_rows_robust($dsDir . '/ProteinDiseaseAssociationNumber.csv', true);
+    } else {
+        $drugs = $diseases = $proteins = $drugDisease = $drugProtein = $diseaseProtein = 0;
+    }
+    
+    $sparsity = ($drugs * $diseases) > 0 ? ($drugDisease / ($drugs * $diseases)) : 0;
+    
+    $datasetsInfo[$ds] = [
+        'name' => $ds . '-dataset',
+        'drugs' => $drugs,
+        'diseases' => $diseases,
+        'proteins' => $proteins,
+        'drugDisease' => $drugDisease,
+        'drugProtein' => $drugProtein,
+        'diseaseProtein' => $diseaseProtein,
+        'sparsity' => $sparsity
+    ];
 }
 
-$drugFile    = $dataDir . '/DrugInformation.csv';
-$diseaseFile = $dataDir . '/DiseaseFeature.csv';
-$proteinFile = $dataDir . '/ProteinInformation.csv';
-
 $stats = [
-    'drugs'       => count_entities($drugFile),
-    'diseases'    => count_entities($diseaseFile, false), // DiseaseFeature.csv không có header
-    'proteins'    => count_entities($proteinFile),
+    'drugs'       => $datasetsInfo[$selectedDataset]['drugs'],
+    'diseases'    => $datasetsInfo[$selectedDataset]['diseases'],
+    'proteins'    => $datasetsInfo[$selectedDataset]['proteins'],
     'predictions' => (int) db()->query('SELECT COUNT(*) FROM prediction_requests')->fetchColumn(),
 ];
 
@@ -37,6 +53,7 @@ try {
 }
 
 $recent = db()->query('SELECT * FROM prediction_requests ORDER BY created_at DESC LIMIT 8')->fetchAll();
+
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -91,6 +108,7 @@ $recent = db()->query('SELECT * FROM prediction_requests ORDER BY created_at DES
     </script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="assets/style.css">
+    <script src="https://unpkg.com/3d-force-graph"></script>
 </head>
 <body class="bg-[#0a0a0f] text-white">
 
@@ -272,7 +290,203 @@ $recent = db()->query('SELECT * FROM prediction_requests ORDER BY created_at DES
 
             </section>
 
+            <!-- Benchmark Dataset Summary Table matching Table 1 in paper -->
+            <section class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 overflow-hidden">
+                <div class="absolute -top-32 -right-20 w-96 h-96 rounded-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
+                <div class="mb-5 flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <i data-lucide="table" class="text-blue-300 w-4 h-4"></i>
+                            <h3 class="text-white font-semibold text-[15px]" style="font-family: 'Space Grotesk', sans-serif;">Bảng tóm tắt các bộ dữ liệu Benchmark (Table 1. Summary of Benchmark Datasets)</h3>
+                        </div>
+                        <p class="text-white/40 text-xs" style="font-family: 'Inter', sans-serif;">Số liệu thực tế được tính toán động (real-time) từ các tệp tin dataset của hệ thống y sinh.</p>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto rounded-xl border border-white/[0.05] bg-black/25">
+                    <table class="w-full border-collapse text-[12.5px] text-left" style="font-family: 'Inter', sans-serif;">
+                        <thead>
+                            <tr class="bg-white/[0.04] border-b border-white/[0.08] text-white/60 font-semibold text-[11px] uppercase tracking-wider">
+                                <th class="px-4 py-3.5">Bộ dữ liệu</th>
+                                <th class="px-4 py-3.5 text-center">Thuốc (Drugs)</th>
+                                <th class="px-4 py-3.5 text-center">Bệnh (Diseases)</th>
+                                <th class="px-4 py-3.5 text-center">Protein (Proteins)</th>
+                                <th class="px-4 py-3.5 text-center text-blue-300">Liên kết Thuốc-Bệnh</th>
+                                <th class="px-4 py-3.5 text-center text-purple-300">Liên kết Thuốc-Protein</th>
+                                <th class="px-4 py-3.5 text-center text-amber-300">Liên kết Bệnh-Protein</th>
+                                <th class="px-4 py-3.5 text-right text-emerald-400">Độ thưa thớt (Sparsity)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach (['B', 'C', 'F'] as $ds): 
+                                $info = $datasetsInfo[$ds];
+                                $isCurrent = ($selectedDataset === $ds);
+                            ?>
+                                <tr class="border-b border-white/[0.04] hover:bg-white/[0.02] transition-all <?= $isCurrent ? 'bg-blue-500/5 font-semibold text-blue-100 border-l-4 border-l-blue-500' : '' ?>">
+                                    <td class="px-4 py-4 flex items-center gap-2">
+                                        <i data-lucide="database" class="w-3.5 h-3.5 <?= $isCurrent ? 'text-blue-400' : 'text-white/40' ?>"></i>
+                                        <span><?= e($info['name']) ?></span>
+                                        <?php if ($isCurrent): ?>
+                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[9px] uppercase tracking-wider font-bold">Đang xem</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="px-4 py-4 text-center font-mono"><?= number_format($info['drugs']) ?></td>
+                                    <td class="px-4 py-4 text-center font-mono"><?= number_format($info['diseases']) ?></td>
+                                    <td class="px-4 py-4 text-center font-mono"><?= number_format($info['proteins']) ?></td>
+                                    <td class="px-4 py-4 text-center font-mono text-blue-300"><?= number_format($info['drugDisease']) ?></td>
+                                    <td class="px-4 py-4 text-center font-mono text-purple-300"><?= number_format($info['drugProtein']) ?></td>
+                                    <td class="px-4 py-4 text-center font-mono text-amber-300"><?= number_format($info['diseaseProtein']) ?></td>
+                                    <td class="px-4 py-4 text-right font-mono text-emerald-400"><?= number_format($info['sparsity'], 4) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 3D GNN Network Graph Visualizations (6 graphs in total: 3 datasets x 2 graph types) -->
+            <section class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 overflow-hidden">
+                <div class="absolute -top-32 -left-20 w-96 h-96 rounded-full bg-purple-500/5 blur-3xl pointer-events-none"></div>
+                <div class="absolute -bottom-32 -right-20 w-96 h-96 rounded-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
+
+                <div class="mb-6 flex justify-between items-center flex-wrap gap-4 border-b border-white/5 pb-5">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500/25 to-purple-500/25 border border-blue-400/20 grid place-items-center text-blue-300">
+                                <i data-lucide="network" class="w-4 h-4"></i>
+                            </div>
+                            <h3 class="text-white font-semibold text-[15px]" style="font-family: 'Space Grotesk', sans-serif;">Trực quan hóa Đồ thị mạng lưới 3D (3D GNN Topology Visualization)</h3>
+                        </div>
+                        <p class="text-white/40 text-xs" style="font-family: 'Inter', sans-serif;">Mô phỏng cấu trúc không gian 3 chiều của các mạng lưới sinh học phục vụ huấn luyện GNN.</p>
+                    </div>
+
+                    <!-- Dataset & Graph Type selectors -->
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <!-- Dataset Selector -->
+                        <div class="flex rounded-xl bg-black/40 border border-white/[0.08] p-1">
+                            <button onclick="changeVizDataset('B')" id="viz-ds-btn-B" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all">B-Dataset</button>
+                            <button onclick="changeVizDataset('C')" id="viz-ds-btn-C" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all">C-Dataset</button>
+                            <button onclick="changeVizDataset('F')" id="viz-ds-btn-F" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all">F-Dataset</button>
+                        </div>
+
+                        <!-- Graph Type Selector -->
+                        <div class="flex rounded-xl bg-black/40 border border-white/[0.08] p-1">
+                            <button onclick="changeVizType('drug_disease')" id="viz-type-btn-drug_disease" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5">
+                                <i data-lucide="share-2" class="w-3 h-3"></i>
+                                <span>Mạng Thuốc - Bệnh</span>
+                            </button>
+                            <button onclick="changeVizType('drug_protein')" id="viz-type-btn-drug_protein" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5">
+                                <i data-lucide="pill" class="w-3 h-3"></i>
+                                <span>Mạng Thuốc - Protein</span>
+                            </button>
+                            <button onclick="changeVizType('disease_protein')" id="viz-type-btn-disease_protein" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5">
+                                <i data-lucide="heart-pulse" class="w-3 h-3"></i>
+                                <span>Mạng Bệnh - Protein</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3D Graph Container & Legend -->
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
+                    <!-- Left: Interactive WebGL Canvas -->
+                    <div class="lg:col-span-3 rounded-2xl border border-white/5 bg-black/35 relative h-[520px] overflow-hidden flex flex-col justify-center items-center shadow-inner">
+                        <!-- WebGL Node Container -->
+                        <div id="3d-graph" class="w-full h-full cursor-grab active:cursor-grabbing"></div>
+
+                        <!-- Info overlays -->
+                        <div class="absolute bottom-4 left-4 bg-black/85 border border-white/10 rounded-xl px-3.5 py-2.5 backdrop-blur-md flex flex-col gap-1 pointer-events-none">
+                            <span class="text-white/40 text-[9px] uppercase tracking-widest font-bold">Trạng thái mô phỏng</span>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                <span id="viz-status-label" class="text-white text-xs font-semibold font-mono">LOADING...</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Right: Legend and details -->
+                    <div class="rounded-2xl border border-white/5 bg-white/[0.02] p-5 flex flex-col justify-between">
+                        <div class="flex flex-col gap-5">
+                            <div>
+                                <span class="text-white/40 text-[10px] font-semibold uppercase tracking-wider block mb-2" style="font-family: 'Inter', sans-serif;">Chú giải Đồ thị (Legend)</span>
+                                <div class="flex flex-col gap-3">
+                                    <div class="flex items-center gap-3">
+                                        <span class="w-3.5 h-3.5 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.6)]"></span>
+                                        <div class="flex flex-col">
+                                            <span class="text-white font-semibold text-xs">Thuốc (Drugs)</span>
+                                            <span class="text-white/40 text-[10px]">Neon Blue · Nút mạng lưới</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        <span class="w-3.5 h-3.5 rounded-full bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.6)]"></span>
+                                        <div class="flex flex-col">
+                                            <span class="text-white font-semibold text-xs">Bệnh lý (Diseases)</span>
+                                            <span class="text-white/40 text-[10px]">Neon Red/Pink · Nút mạng lưới</span>
+                                        </div>
+                                    </div>
+                                    <div id="legend-protein-row" class="flex items-center gap-3">
+                                        <span class="w-3.5 h-3.5 rounded-full bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"></span>
+                                        <div class="flex flex-col">
+                                            <span class="text-white font-semibold text-xs">Protein (Proteins)</span>
+                                            <span class="text-white/40 text-[10px]">Neon Gold · Nút mạng lưới</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="border-t border-white/5 pt-4">
+                                <span class="text-white/40 text-[10px] font-semibold uppercase tracking-wider block mb-2.5" style="font-family: 'Inter', sans-serif;">Tham số Bộ dữ liệu mô phỏng</span>
+                                <div class="bg-black/20 rounded-xl border border-white/5 p-3.5 flex flex-col gap-2.5 font-mono text-[11px]">
+                                    <div id="stat-viz-drugs-row" class="flex justify-between">
+                                        <span class="text-white/45">Thuốc (Drugs):</span>
+                                        <span id="stat-viz-drugs" class="text-blue-300 font-bold">--</span>
+                                    </div>
+                                    <div id="stat-viz-diseases-row" class="flex justify-between">
+                                        <span class="text-white/45">Bệnh (Diseases):</span>
+                                        <span id="stat-viz-diseases" class="text-red-300 font-bold">--</span>
+                                    </div>
+                                    <div id="stat-viz-proteins-row" class="flex justify-between">
+                                        <span class="text-white/45">Protein (Proteins):</span>
+                                        <span id="stat-viz-proteins" class="text-amber-300 font-bold">--</span>
+                                    </div>
+                                    <div class="border-t border-white/5 my-1"></div>
+                                    <div id="stat-viz-dd-row" class="flex justify-between">
+                                        <span class="text-blue-300/70">Liên kết Thuốc-Bệnh:</span>
+                                        <span id="stat-ds-dd" class="text-blue-300 font-bold">--</span>
+                                    </div>
+                                    <div id="stat-viz-dp-row" class="flex justify-between">
+                                        <span class="text-purple-300/70">Liên kết Thuốc-Prot:</span>
+                                        <span id="stat-ds-dp" class="text-purple-300 font-bold">--</span>
+                                    </div>
+                                    <div id="stat-viz-dep-row" class="flex justify-between">
+                                        <span class="text-amber-300/70">Liên kết Bệnh-Prot:</span>
+                                        <span id="stat-ds-dep" class="text-amber-300 font-bold">--</span>
+                                    </div>
+                                    <div class="flex justify-between border-t border-white/5 pt-2 mt-1">
+                                        <span class="text-emerald-400/80">Độ thưa (Sparsity):</span>
+                                        <span id="stat-ds-sparsity" class="text-emerald-400 font-bold">--</span>
+                                    </div>
+                                    <div class="flex justify-between text-[10px] opacity-40 italic mt-0.5 border-t border-white/5 pt-1.5">
+                                        <span>Đang vẽ (Links vẽ):</span>
+                                        <span id="stat-viz-links" class="font-bold">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Instructions / Tips -->
+                        <div class="bg-blue-500/5 border border-blue-500/10 rounded-xl p-3.5 mt-4 text-[11px] text-blue-300/80 leading-relaxed" style="font-family: 'Inter', sans-serif;">
+                            <i data-lucide="help-circle" class="w-3.5 h-3.5 inline mr-1 -translate-y-[1px]"></i>
+                            <span>Bạn có thể sử dụng chuột trái để xoay không gian 3D, lăn nút giữa chuột để zoom mạng lưới và di chuột lên nút thực thể để xem chi tiết tên y sinh!</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Bottom content grids -->
+
+
             <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
                 <!-- Diagnostics history card (2 cols on large screen) -->
@@ -352,10 +566,215 @@ $recent = db()->query('SELECT * FROM prediction_requests ORDER BY created_at DES
 </div>
 
 <script>
-// Initial draw of icons
-if (window.lucide) {
-    window.lucide.createIcons();
+const datasetsMetadata = <?= json_encode($datasetsInfo) ?>;
+let currentVizDataset = '<?= $selectedDataset ?>';
+let currentVizType = 'drug_disease';
+let myGraph = null;
+
+
+// Hàm khởi tạo và tải đồ thị 3D WebGL
+function init3dGraph() {
+    const statusLabel = document.getElementById('viz-status-label');
+    statusLabel.textContent = 'CONNECTING API...';
+    
+    // Cập nhật ngay lập tức các thông số bộ dữ liệu đang chọn
+    const metadata = datasetsMetadata[currentVizDataset];
+    if (metadata) {
+        document.getElementById('stat-ds-dd').textContent = Number(metadata.drugDisease).toLocaleString('vi-VN');
+        document.getElementById('stat-ds-dp').textContent = Number(metadata.drugProtein).toLocaleString('vi-VN');
+        document.getElementById('stat-ds-dep').textContent = Number(metadata.diseaseProtein).toLocaleString('vi-VN');
+        document.getElementById('stat-ds-sparsity').textContent = Number(metadata.sparsity).toLocaleString('vi-VN', {
+            minimumFractionDigits: 4,
+            maximumFractionDigits: 4
+        });
+    }
+
+    // Cập nhật trạng thái các nút Dataset
+    ['B', 'C', 'F'].forEach(ds => {
+        const btn = document.getElementById(`viz-ds-btn-${ds}`);
+        if (btn) {
+            if (ds === currentVizDataset) {
+                btn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-500 text-white shadow-md transition-all';
+            } else {
+                btn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white/50 hover:text-white transition-all';
+            }
+        }
+    });
+
+    // Cập nhật trạng thái các nút Graph Type
+    ['drug_disease', 'drug_protein', 'disease_protein'].forEach(type => {
+        const btn = document.getElementById(`viz-type-btn-${type}`);
+        if (btn) {
+            if (type === currentVizType) {
+                btn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-500 text-white shadow-md transition-all flex items-center gap-1.5';
+            } else {
+                btn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white/50 hover:text-white transition-all flex items-center gap-1.5';
+            }
+        }
+    });
+
+    // Ẩn/Hiện chú giải và số liệu tương ứng với từng loại đồ thị
+    const blueSpan = document.querySelector('span.bg-blue-500');
+    const redSpan = document.querySelector('span.bg-red-500');
+    const drugLegend = blueSpan ? blueSpan.closest('.flex.items-center.gap-3') : null;
+    const diseaseLegend = redSpan ? redSpan.closest('.flex.items-center.gap-3') : null;
+    const proteinLegend = document.getElementById('legend-protein-row');
+    
+    const drugStatRow = document.getElementById('stat-viz-drugs') ? document.getElementById('stat-viz-drugs').closest('.flex.justify-between') : null;
+    const diseaseStatRow = document.getElementById('stat-viz-diseases') ? document.getElementById('stat-viz-diseases').closest('.flex.justify-between') : null;
+    const proteinStatRow = document.getElementById('stat-viz-proteins-row');
+
+    const ddLinkRow = document.getElementById('stat-viz-dd-row');
+    const dpLinkRow = document.getElementById('stat-viz-dp-row');
+    const depLinkRow = document.getElementById('stat-viz-dep-row');
+
+    if (currentVizType === 'drug_disease') {
+        if (drugLegend) drugLegend.style.display = 'flex';
+        if (diseaseLegend) diseaseLegend.style.display = 'flex';
+        if (proteinLegend) proteinLegend.style.display = 'none';
+        
+        if (drugStatRow) drugStatRow.style.display = 'flex';
+        if (diseaseStatRow) diseaseStatRow.style.display = 'flex';
+        if (proteinStatRow) proteinStatRow.style.display = 'none';
+        
+        if (ddLinkRow) ddLinkRow.style.display = 'flex';
+        if (dpLinkRow) dpLinkRow.style.display = 'none';
+        if (depLinkRow) depLinkRow.style.display = 'none';
+    } else if (currentVizType === 'drug_protein') {
+        if (drugLegend) drugLegend.style.display = 'flex';
+        if (diseaseLegend) diseaseLegend.style.display = 'none';
+        if (proteinLegend) proteinLegend.style.display = 'flex';
+        
+        if (drugStatRow) drugStatRow.style.display = 'flex';
+        if (diseaseStatRow) diseaseStatRow.style.display = 'none';
+        if (proteinStatRow) proteinStatRow.style.display = 'flex';
+        
+        if (ddLinkRow) ddLinkRow.style.display = 'none';
+        if (dpLinkRow) dpLinkRow.style.display = 'flex';
+        if (depLinkRow) depLinkRow.style.display = 'none';
+    } else { // disease_protein
+        if (drugLegend) drugLegend.style.display = 'none';
+        if (diseaseLegend) diseaseLegend.style.display = 'flex';
+        if (proteinLegend) proteinLegend.style.display = 'flex';
+        
+        if (drugStatRow) drugStatRow.style.display = 'none';
+        if (diseaseStatRow) diseaseStatRow.style.display = 'flex';
+        if (proteinStatRow) proteinStatRow.style.display = 'flex';
+        
+        if (ddLinkRow) ddLinkRow.style.display = 'none';
+        if (dpLinkRow) dpLinkRow.style.display = 'none';
+        if (depLinkRow) depLinkRow.style.display = 'flex';
+    }
+
+    // Gọi API động lấy dữ liệu
+    fetch(`api_graph.php?dataset=${currentVizDataset}&type=${currentVizType}`)
+        .then(res => res.json())
+        .then(data => {
+            statusLabel.textContent = 'RENDERING WebGL...';
+            
+            // Cập nhật động số thực thể thực tế từ dữ liệu tải về
+            const drugsCount = data.nodes.filter(n => n.group === 'drug').length;
+            const diseasesCount = data.nodes.filter(n => n.group === 'disease').length;
+            const proteinsCount = data.nodes.filter(n => n.group === 'protein').length;
+
+            if (document.getElementById('stat-viz-drugs')) {
+                document.getElementById('stat-viz-drugs').textContent = drugsCount.toLocaleString('vi-VN');
+            }
+            if (document.getElementById('stat-viz-diseases')) {
+                document.getElementById('stat-viz-diseases').textContent = diseasesCount.toLocaleString('vi-VN');
+            }
+            if (document.getElementById('stat-viz-proteins')) {
+                document.getElementById('stat-viz-proteins').textContent = proteinsCount.toLocaleString('vi-VN');
+            }
+            document.getElementById('stat-viz-links').textContent = data.links.length.toLocaleString('vi-VN');
+
+            const graphContainer = document.getElementById('3d-graph');
+            
+            // Xóa canvas cũ nếu có để tránh tràn bộ nhớ
+            graphContainer.innerHTML = '';
+
+            // Tỷ lệ động link width & opacity dựa trên số lượng liên kết để hiển thị thanh thoát, rực rỡ
+            const numLinks = data.links.length;
+            let finalLinkWidth = 1.8;
+            let finalLinkOpacity = 0.65;
+
+            if (numLinks > 20000) {
+                finalLinkWidth = 0.5;
+                finalLinkOpacity = 0.15;
+            } else if (numLinks > 5000) {
+                finalLinkWidth = 0.8;
+                finalLinkOpacity = 0.32;
+            } else if (numLinks > 1000) {
+                finalLinkWidth = 1.25;
+                finalLinkOpacity = 0.48;
+            }
+
+            myGraph = ForceGraph3D()(graphContainer)
+                .graphData(data)
+                .backgroundColor('rgba(0,0,0,0)') // trong suốt để tiệp với nền mờ kính
+                .showNavInfo(false)
+                .nodeColor(node => {
+                    if (node.group === 'drug') return '#3b82f6'; // Neon Blue
+                    if (node.group === 'disease') return '#ef4444'; // Neon Red
+                    return '#f59e0b'; // Neon Gold (Protein)
+                })
+                .linkColor(link => link.color || 'rgba(255,255,255,0.08)')
+                .nodeLabel(node => `
+                    <div class="bg-black/95 px-3 py-2 rounded-xl border border-white/10 shadow-2xl backdrop-blur-md flex flex-col gap-0.5" style="font-family: 'Inter', sans-serif; font-size: 11px;">
+                        <span class="text-white/40 text-[9px] uppercase tracking-widest font-bold text-left">${node.type}</span>
+                        <span class="text-white font-bold text-left">${node.name}</span>
+                        <span class="text-white/50 font-mono text-[10px] text-left">Mã: ${node.code}</span>
+                    </div>
+                `)
+                .nodeVal(node => node.val)
+                .nodeOpacity(0.95)
+                .linkWidth(finalLinkWidth)
+                .linkOpacity(finalLinkOpacity)
+                .width(graphContainer.clientWidth)
+                .height(graphContainer.clientHeight);
+
+            // Tối ưu hóa hiệu năng hội tụ cho mạng đồ thị lớn
+            const numNodes = data.nodes.length;
+            if (numNodes > 800) {
+                myGraph.cooldownTicks(90); // Giới hạn số tick layout để giải phóng CPU sớm
+            }
+
+
+            statusLabel.textContent = `${currentVizDataset}-DATASET: ACTIVE`;
+        })
+        .catch(err => {
+            console.error(err);
+            statusLabel.textContent = 'API ERROR';
+        });
 }
+
+function changeVizDataset(ds) {
+    currentVizDataset = ds;
+    init3dGraph();
+}
+
+function changeVizType(type) {
+    currentVizType = type;
+    init3dGraph();
+}
+
+
+// Lắng nghe sự kiện resize màn hình để cập nhật kích thước đồ thị
+window.addEventListener('resize', () => {
+    if (myGraph) {
+        const container = document.getElementById('3d-graph');
+        myGraph.width(container.clientWidth).height(container.clientHeight);
+    }
+});
+
+// Chạy khởi tạo đồ thị lần đầu và vẽ icon Lucide
+document.addEventListener('DOMContentLoaded', () => {
+    init3dGraph();
+    
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+});
 </script>
 </body>
 </html>
