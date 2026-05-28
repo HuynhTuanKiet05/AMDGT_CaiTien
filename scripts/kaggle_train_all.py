@@ -22,7 +22,7 @@ from pathlib import Path
 # ── Kaggle-specific setup ──────────────────────────────────
 KAGGLE = os.path.exists('/kaggle')
 if KAGGLE:
-    REPO = Path('/kaggle/working/Colab_V4')
+    REPO = Path('/kaggle/working/AMDGT_CaiTien')
     OUTPUT = Path('/kaggle/working/checkpoints')
 else:
     REPO = Path(__file__).resolve().parent.parent
@@ -101,11 +101,11 @@ def make_args(dataset, data_dir, preset, model_version='improved'):
 
 # ── Training: ORIGINAL model ──────────────────────────────
 def train_original(dataset, epochs=1000, k_fold=10):
-    from AMDGT_original.data_preprocess import (
+    from AMDGT.data_preprocess import (
         get_data, data_processing, k_fold as make_kfold,
         dgl_similarity_graph, dgl_heterograph,
     )
-    from AMDGT_original.model.AMNTDDA import AMNTDDA
+    from AMDGT.model.AMNTDDA import AMNTDDA
     from metric import get_metric
     import pandas as pd
 
@@ -113,7 +113,7 @@ def train_original(dataset, epochs=1000, k_fold=10):
     print(f"ORIGINAL MODEL | {dataset} | {epochs} epochs | {k_fold} folds")
     print(f"{'='*60}")
 
-    data_dir = REPO / 'AMDGT_original' / 'data' / dataset
+    data_dir = REPO / 'AMDGT' / 'data' / dataset
     args = make_args(dataset, data_dir, ORIGINAL_PRESET, 'original')
     args.k_fold = k_fold
 
@@ -218,7 +218,7 @@ def train_improved(dataset, epochs=1000, k_fold=10):
     print(f"{'='*60}")
 
     preset = IMPROVED_PRESETS[dataset]
-    data_dir = REPO / 'AMDGT_original' / 'data' / dataset
+    data_dir = REPO / 'AMDGT' / 'data' / dataset
     args = make_args(dataset, data_dir, preset, 'improved')
     args.k_fold = k_fold
 

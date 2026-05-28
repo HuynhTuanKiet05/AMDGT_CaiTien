@@ -1,6 +1,6 @@
 # Google Colab Training Guide
 
-Huong dan nay gom dung quy trinh da debug de chay repo `Colab_V4` tren Google Colab Linux.
+Huong dan nay gom dung quy trinh da debug de chay repo `AMDGT_CaiTien` tren Google Colab Linux.
 
 Tai lieu nay uu tien:
 
@@ -33,24 +33,24 @@ Neu `!nvidia-smi` khong ra GPU hoac `torch.cuda.is_available()` la `False` thi k
 
 ```python
 %cd /content
-!rm -rf /content/Colab_V4
-!git clone https://github.com/HuynhTuanKiet05/Colab_V4.git
+!rm -rf /content/AMDGT_CaiTien
+!git clone https://github.com/HuynhTuanKiet05/AMDGT_CaiTien.git
 
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !git log --oneline -1
 ```
 
 Neu repo da ton tai va chi muon cap nhat dung ban moi nhat:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !git pull origin main
 ```
 
-Neu ban muon mot cell an toan de dam bao thu muc `/content/Colab_V4` luon ton tai truoc moi buoc setup/train, dung cell nay:
+Neu ban muon mot cell an toan de dam bao thu muc `/content/AMDGT_CaiTien` luon ton tai truoc moi buoc setup/train, dung cell nay:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !pip uninstall -y torch torchvision torchaudio dgl dglgo torchdata numpy pandas scikit-learn networkx
 ```
 
@@ -75,22 +75,22 @@ import os
 
 %cd /content
 
-if not os.path.exists("/content/Colab_V4"):
-    !git clone https://github.com/HuynhTuanKiet05/Colab_V4.git
+if not os.path.exists("/content/AMDGT_CaiTien"):
+    !git clone https://github.com/HuynhTuanKiet05/AMDGT_CaiTien.git
 else:
     print("Repo da ton tai, cap nhat ban moi nhat...")
-    %cd /content/Colab_V4
+    %cd /content/AMDGT_CaiTien
     !git pull origin main
     %cd /content
 
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !git log --oneline -1
 ```
 
 Sau do moi setup:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !bash scripts/colab_setup.sh
 ```
 
@@ -108,20 +108,20 @@ import os
 
 %cd /content
 
-if not os.path.exists("/content/Colab_V4"):
-    !git clone https://github.com/HuynhTuanKiet05/Colab_V4.git
+if not os.path.exists("/content/AMDGT_CaiTien"):
+    !git clone https://github.com/HuynhTuanKiet05/AMDGT_CaiTien.git
 else:
-    %cd /content/Colab_V4
+    %cd /content/AMDGT_CaiTien
     !git pull origin main
     %cd /content
 
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 ```
 
 ### Neu `colab_setup.sh` loi, cai thu cong
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python -m pip install --upgrade pip setuptools wheel
 !python -m pip uninstall -y torch torchvision torchaudio dgl dglgo torchdata
 !python -m pip install --no-cache-dir --force-reinstall \
@@ -142,7 +142,7 @@ Sau khi runtime len lai, chay tiep.
 ### 2.4. Cai cac package train
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !pip install --no-cache-dir --force-reinstall \
   numpy==1.26.4 \
   pandas==2.2.2 \
@@ -159,7 +159,7 @@ Sau khi runtime len lai, chay tiep.
 !pip install --no-cache-dir --force-reinstall \
   dgl==2.4.0+cu121 \
   -f https://data.dgl.ai/wheels/torch-2.4/cu121/repo.html
-!python -m pip install --no-cache-dir --force-reinstall -r requirements-colab.txt
+!python -m pip install --no-cache-dir --force-reinstall -r requirements.txt
 ```
 
 Restart runtime sau khi cai xong:
@@ -172,7 +172,7 @@ os.kill(os.getpid(), signal.SIGKILL)
 ## 4. Kiem tra moi truong sau khi cai
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 import torch, dgl, numpy, pandas, sklearn, networkx, torchdata
 
 print("torch:", torch.__version__)
@@ -193,7 +193,7 @@ Neu cell tren chay duoc thi moi truong da on.
 Nen chay smoke test truoc khi train 1000 epoch.
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python scripts/colab_train.py --dataset C-dataset --preset smoke
 ```
 
@@ -212,7 +212,7 @@ fix). Khong can truyen tay `--lr`, `--neighbor`, `--hgt_layer`, ...; chi can
 chi dinh dataset va `--save_checkpoints`:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python train_final.py \
   --dataset C-dataset \
   --k_fold 10 \
@@ -236,7 +236,7 @@ from google.colab import drive
 drive.mount('/content/drive')
 
 import os, time
-RUN_DIR = f"/content/drive/MyDrive/Colab_V4_runs/Cdataset_{time.strftime('%Y%m%d_%H%M%S')}"
+RUN_DIR = f"/content/drive/MyDrive/AMDGT_CaiTien_runs/Cdataset_{time.strftime('%Y%m%d_%H%M%S')}"
 os.makedirs(RUN_DIR, exist_ok=True)
 print("RUN_DIR =", RUN_DIR)
 ```
@@ -251,7 +251,7 @@ Luu y:
 ### Cach 1: smoke test truc tiep bang `train_final.py`
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python train_final.py \
   --dataset C-dataset \
   --k_fold 10 \
@@ -259,22 +259,22 @@ Luu y:
   --patience 180 \
   --device cuda \
   --save_checkpoints \
-  --result_root /content/drive/MyDrive/Colab_V4_runs/C-dataset_run1
+  --result_root /content/drive/MyDrive/AMDGT_CaiTien_runs/C-dataset_run1
 ```
 
 ### Cach 2: dung launcher Colab
 
 ```python
-%cd /content/Colab_V4/AMDGT_original
+%cd /content/AMDGT_CaiTien/AMDGT
 
 Neu smoke test pass, moi chay train dai.
 
-## 7. Train ban mac dinh cua `Colab_V4`
+## 7. Train ban mac dinh cua `AMDGT_CaiTien`
 
 Day la lenh train dung bo tham so `C-dataset` hien tai:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 cmd = f"""
 python train_final.py \
   --dataset C-dataset \
@@ -297,14 +297,14 @@ print(cmd)
 
 ## 8. Train bien the `rvg` de doi chieu
 
-### 8.1. `No such file or directory: /content/Colab_V4`
+### 8.1. `No such file or directory: /content/AMDGT_CaiTien`
 
 Repo chua duoc clone.
 
 Chay lai:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python train_final.py \
   --dataset C-dataset \
   --device cuda \
@@ -329,7 +329,7 @@ Chay lai:
 Launcher nay la mot wrapper cho Colab. Vi du:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !python scripts/colab_train.py --dataset C-dataset --preset full --device cuda --mount-drive
 ```
 
@@ -341,21 +341,21 @@ Preset co san:
 
 ## 10. Cac loi da gap va cach xu ly
 
-### 10.1. `No such file or directory: /content/Colab_V4`
+### 10.1. `No such file or directory: /content/AMDGT_CaiTien`
 
 Repo chua duoc clone hoac dang o ten thu muc khac.
 
 ```python
 !ls /content
 %cd /content
-!git clone https://github.com/HuynhTuanKiet05/Colab_V4.git
+!git clone https://github.com/HuynhTuanKiet05/AMDGT_CaiTien.git
 
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 ```
 
 ### 10.2. `python3: can't open file '/content/train_final.py'`
 
-Thuong la do `%cd /content/Colab_V4` da that bai, nen notebook van dang o `/content`.
+Thuong la do `%cd /content/AMDGT_CaiTien` da that bai, nen notebook van dang o `/content`.
 
 Chay:
 
@@ -382,7 +382,7 @@ Neu khong co GPU, doi tam sang:
 --device cpu
 ```
 
-### 10.4. `Missing dataset files in AMDGT_original/data/c-dataset`
+### 10.4. `Missing dataset files in AMDGT/data/c-dataset`
 
 Linux phan biet hoa thuong. Dung:
 
@@ -427,7 +427,7 @@ Neu cac package sau import duoc va smoke test pass, co the tiep tuc:
 Da duoc fix trong repo. Chi can:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !git pull origin main
 ```
 
@@ -438,7 +438,7 @@ Day la loi API DGL cu. Repo da duoc fix de dung DGL 2.x.
 Chi can:
 
 ```python
-%cd /content/Colab_V4
+%cd /content/AMDGT_CaiTien
 !git pull origin main
 ```
 
@@ -484,7 +484,7 @@ Muc tieu khong phai lam toan bo Colab "sach", ma la dam bao cac package can cho 
 Thu tu an toan nhat:
 
 1. Bat GPU runtime
-2. Clone `Colab_V4`
+2. Clone `AMDGT_CaiTien`
 3. Cai moi truong
 4. Restart runtime
 5. Kiem tra version

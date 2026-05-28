@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-d = r'D:\LapTrinh\Đồ án cơ sở\Colab_V4\AMDGT_original\data\B-dataset'
+d = r'D:\LapTrinh\Đồ án cơ sở\AMDGT_CaiTien\AMDGT\data\B-dataset'
 
 drug = pd.read_csv(os.path.join(d, 'Drug_mol2vec.csv'), header=None)
 dis = pd.read_csv(os.path.join(d, 'DiseaseFeature.csv'), header=None)

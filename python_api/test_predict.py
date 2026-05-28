@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-sys.path.append(str(Path('D:/LapTrinh/Đồ án cơ sở/Colab_V4').resolve()))
+sys.path.append(str(Path('D:/LapTrinh/Đồ án cơ sở/AMDGT_CaiTien').resolve()))
 from python_api.main import InferenceManager
 import numpy as np
 

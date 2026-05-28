@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import gc
 import logging
 import os
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", default="C-dataset", help="dataset")
     parser.add_argument("--dropout", default=0.2, type=float, help="dropout")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="training device")
-    parser.add_argument("--data_root", default=None, help="dataset directory; defaults to AMDGT_original/data/<dataset>")
+    parser.add_argument("--data_root", default=None, help="dataset directory; defaults to AMDGT/data/<dataset>")
     parser.add_argument("--result_root", default=None, help="output directory; defaults to Result/improved/<dataset>")
     parser.add_argument("--save_checkpoints", action=argparse.BooleanOptionalAction, default=False, help="save model checkpoints")
     parser.add_argument("--eval_start_epoch", default=1, type=int, help="minimum epoch before evaluation begins")
@@ -433,7 +433,7 @@ if __name__ == "__main__":
     os.environ["AMDGT_DEVICE"] = device.type
     set_random_seed(args.random_seed)
 
-    default_data_dir = Path("AMDGT_original") / "data" / args.dataset
+    default_data_dir = Path("AMDGT") / "data" / args.dataset
     default_result_dir = Path("Result") / "improved" / args.dataset
     args.data_dir = str(Path(args.data_root) if args.data_root else default_data_dir)
     args.result_dir = str(Path(args.result_root) if args.result_root else default_result_dir)

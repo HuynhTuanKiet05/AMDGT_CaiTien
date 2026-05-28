@@ -113,3 +113,55 @@ function flash(string $key, ?string $message = null): ?string
     unset($_SESSION['_flash'][$key]);
     return $value;
 }
+
+function load_csv_assoc(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $handle = @fopen($path, 'r');
+    if ($handle === false) {
+        return [];
+    }
+
+    $header = fgetcsv($handle);
+    if ($header === false) {
+        fclose($handle);
+        return [];
+    }
+
+    $header = array_map(static fn($value) => trim((string) $value), $header);
+    $rows = [];
+
+    while (($row = fgetcsv($handle)) !== false) {
+        $assoc = [];
+        foreach ($header as $index => $key) {
+            $assoc[$key !== '' ? $key : ('col_' . $index)] = trim((string) ($row[$index] ?? ''));
+        }
+        $rows[] = $assoc;
+    }
+
+    fclose($handle);
+    return $rows;
+}
+
+function count_csv_lines(string $path): int
+{
+    if (!is_file($path)) {
+        return 0;
+    }
+
+    $handle = @fopen($path, 'r');
+    if ($handle === false) {
+        return 0;
+    }
+
+    $rows = 0;
+    while (fgets($handle) !== false) {
+        $rows++;
+    }
+
+    fclose($handle);
+    return $rows;
+}

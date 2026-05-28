@@ -1,4 +1,4 @@
-# Colab_V2 - Drug Disease AI Predictor
+# AMDGT_CaiTien - Drug Disease AI Predictor
 
 ## Current Repository Layout
 
@@ -6,7 +6,7 @@
 - `public/`: PHP web entry points and assets.
 - `python_api/`: FastAPI prediction service.
 - `model/`: model implementations used by the improved pipeline.
-- `AMDGT_original/`: original baseline code kept for comparison.
+- `AMDGT/`: original baseline code kept for comparison.
 - `scripts/`: setup, training, and metadata utilities.
 - `database/database_schema.sql`: MySQL schema.
 - `docs/`: guides, reports, and planning notes.
@@ -41,7 +41,7 @@ Dự án gồm 3 phần chính:
 ## Cấu trúc thư mục
 
 ```text
-CaiTien_HGT_repo/
+AMDGT_CaiTien/
 ├─ app/
 ├─ public/
 │  ├─ assets/
@@ -71,81 +71,21 @@ CaiTien_HGT_repo/
 - `pip`
 - Các thư viện theo `requirements.txt` của phần Python API / training
 
-## Hướng dẫn cài đặt
+## Hướng dẫn cài đặt môi trường và Khởi chạy
 
-### 1) Clone hoặc copy source vào XAMPP
-Đặt project vào thư mục:
+Để đảm bảo hệ thống hoạt động ổn định và chính xác trên máy tính mới, vui lòng tham khảo các hướng dẫn chi tiết sau đây:
 
-```bash
-C:\xampp\htdocs\DoANBase_Final\CaiTien_HGT_repo
-```
+1. 💻 **Hướng dẫn thiết lập môi trường từ đầu (Cài MySQL, Conda & Venv, PyTorch/DGL):**
+   👉 Xem chi tiết tại: [docs/guides/LOCAL_SETUP.md](file:///d:/LapTrinh/%C4%90%E1%BB%93%20%C3%A1n%20c%C6%A1%20s%E1%BB%9F/AMDGT_CaiTien/docs/guides/LOCAL_SETUP.md)
 
-### 2) Tạo database
-- Mở **phpMyAdmin**
-- Tạo database theo cấu hình trong `app/config.local.php` nếu bạn đã tạo file local, hoặc `app/config.php` nếu chỉ dùng bản mẫu
-- Import file SQL nếu dự án có sẵn schema/dump dữ liệu
+2. 🚀 **Hướng dẫn khởi chạy hệ thống Web PHP và FastAPI Backend:**
+   👉 Xem chi tiết tại: [docs/guides/HUONG_DAN_CHAY_WEB.md](file:///d:/LapTrinh/%C4%90%E1%BB%93%20%C3%A1n%20c%C6%A1%20s%E1%BB%9F/AMDGT_CaiTien/docs/guides/HUONG_DAN_CHAY_WEB.md)
 
-> Nếu bạn chưa có file SQL, hãy kiểm tra trong repo xem có file như `database_schema.sql`, `schema.sql` hoặc file dump tương tự.
+---
 
-### 3) Cấu hình kết nối CSDL
-Mở file:
-
-```bash
-app/config.local.php
-```
-
-Nếu chưa có file local, hãy copy từ:
-
-```bash
-app/config.example.php
-```
-
-Kiểm tra các thông số:
-- host
-- database name
-- username
-- password
-
-Ví dụ thường dùng trên XAMPP:
-- host: `127.0.0.1`
-- user: `root`
-- password: rỗng
-
-### 4) Cài Python dependencies
-Mở terminal tại thư mục dự án hoặc thư mục `python_api`, sau đó cài thư viện:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-Nếu `requirements.txt` nằm trong `python_api/` thì chạy:
-
-```bash
-cd python_api
-python -m pip install -r requirements.txt
-```
-
-### 5) Chạy Python API
-Khởi động API tại cổng `8000`:
-
-```bash
-uvicorn main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-Kiểm tra health:
-
-```bash
-http://127.0.0.1:8000/health
-```
-
-### 6) Chạy web PHP
-- Mở XAMPP
-- Start **Apache** và **MySQL**
-- Truy cập web:
-
-```bash
-http://localhost/DoANBase_Final/CaiTien_HGT_repo/public/login.php
-```
+### Tóm tắt nhanh cách khởi chạy:
+* **Backend AI (FastAPI):** Kích hoạt môi trường ảo của bạn (`amdgt_env` hoặc `.venv`), di chuyển vào thư mục `python_api` và chạy `uvicorn main:app --port 8000` (hoặc chỉ cần click đúp vào file chạy nhanh `restart_api.bat` ở gốc).
+* **Frontend Web (PHP):** Khởi động Apache/MySQL trên XAMPP và chạy lệnh `php -S localhost:8080 -t public` tại thư mục gốc của dự án, sau đó truy cập `http://localhost:8080` trên trình duyệt.
 
 ## Tài khoản mặc định
 

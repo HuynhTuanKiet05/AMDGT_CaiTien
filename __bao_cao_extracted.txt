@@ -1,0 +1,194 @@
+[TABLE]
+| BỘ GIÁO DỤC VÀ ĐÀO TẠO TRƯỜNG ĐẠI HỌC CÔNG NGHỆ TP. HCM
+[/TABLE]
+BÁO CÁO ĐỒ ÁN CƠ SỞ
+XÂY DỰNG WEBSITE DỰ ĐOÁN THUỐC ĐIỀU TRỊ BỆNH DỰA TRÊN MẠNG LIÊN KẾT THUỐC – PROTEIN – BỆNH
+Ngành	: 	Công Nghệ Thông Tin
+Chuyên Ngành  :  Công Nghệ Phần Mềm
+Giảng viên hướng dẫn: Gv. Nguyễn Hữu Trung
+Sinh viên thực hiện:		Phan Trần Đức Trí
+Huỳnh Tuấn Kiệt
+TP. Hồ Chí Minh, 2026
+LỜI MỞ ĐẦU
+Trong bối cảnh y học và công nghệ sinh học ngày càng phát triển, việc nghiên cứu và phát triển một loại thuốc mới từ đầu là một quá trình vô cùng phức tạp, đòi hỏi chi phí khổng lồ và thời gian thử nghiệm lâm sàng kéo dài hàng chục năm.
+Nhằm giải quyết thách thức này, chiến lược Tái sử dụng thuốc (Drug Repurposing/Repositioning) đã ra đời, mang lại giải pháp tìm kiếm các công dụng điều trị mới từ những loại thuốc đã được phê duyệt an toàn HGTDR Advancing drug repurposing with heterogeneous graph transformers.pdf].
+Song song với đó, cuộc cách mạng công nghiệp 4.0 và Trí tuệ nhân tạo (AI) đã khẳng định vai trò then chốt trong việc xử lý dữ liệu lớn. Sự phức tạp của các tương tác sinh học giữa Thuốc, Bệnh và Protein đòi hỏi một phương pháp biểu diễn dữ liệu mạnh mẽ. Nhận thấy tiềm năng to lớn của mạng nơ-ron đồ thị, tôi quyết định thực hiện đề tài “ Xây dựng website dự đoán thuốc điều trị bệnh dựa trên mạng liên kết thuốc – protein – bệnh”.
+Mục tiêu chính của đồ án này là xây dựng một hệ thống học sâu tiên tiến, khả năng tự động học hỏi từ mạng lưới đồ thị sinh học không đồng nhất (Heterogeneous Graph) Drug-Disease Association Prediction Using Heterogeneous Networks for Computational Drug Repositioning.pdf]. Hệ thống sẽ hỗ trợ các nhà nghiên cứu y học khoanh vùng và dự đoán chính xác những loại thuốc có khả năng điều trị một căn bệnh cụ thể, từ đó tối ưu hóa thời gian và chi phí phát triển thuốc.
+Em xin chân thành cảm ơn!
+Sinh viên thực hiện
+LỜI CẢM ƠN
+Đầu tiên, chúng em xin gửi lời cảm ơn đến quý thầy cô Khoa Công Nghệ Thông Tin HUTECH đã nhiệt tình hỗ trợ cho chúng em những kiến thức về Công Nghệ Thông Tin để thực hiện đồ án này.
+Bằng cách riêng, chúng em xin cảm ơn ThS. Nguyễn Hữu Trung – người trực tiếp giúp đỡ và tạo điều kiện, cung cấp cho chúng em những kiến thức và các công nghệ cần thiết để hoàn thành đồ án này.
+Cuối cùng, chúng em xin gửi lời cảm ơn đến gia đình, các anh chị và các bạn đã hỗ trợ cho chúng em rất nhiều trong suốt quá trình học tập, nghiên cứu và thực hiện đề tài đồ án một cách hoàn chỉnh. Chúng em xin kính chúc Ban Giám Hiệu nhà trường cùng quý Thầy Cô sức khoẻ, luôn vui vẻ và đạt nhiều thành công trong công việc.
+TP. Hồ Chí Minh,
+LỜI CAM ĐOAN
+Nhóm em xin cam đoan nội dung Đồ Án Cơ Sở Xây dựng website dự đoán thuốc điều trị bệnh dựa trên mạng liên kết thuốc – protein – bệnh là sản phẩm của nhóm em. Những vấn đề được trình bày trong báo cáo là kết quả của quá trình học tập, nghiên cứu, làm việc của cá nhân nhóm. Tất cả tài liệu tham khảo đều có xuất xứ rõ ràng và được trích dẫn hợp pháp.
+Nhóm em xin chịu hoàn toàn trách nhiệm cho lời cam đoan của mình.
+MỤC LỤC
+Chương 1:  TÓM TẮT QUÁ TRÌNH THỰC HIỆN ĐỒ ÁN
+1.1 Mục tiêu và Đối tượng nghiên cứu:
+Đề tài tập trung vào việc dự đoán liên kết Thuốc - Bệnh (Drug-Disease Association - DDA) bằng mạng lưới thần kinh đồ thị không đồng nhất (HGT). Nhóm đã kế thừa mô hình AMDGT gốc và nâng cấp thành một hệ thống hoàn chỉnh bao gồm mô hình AI cải tiến và nền tảng Web/API.
+1.2 Quá trình triển khai:
+Giai đoạn 1 (Nghiên cứu): Phân tích mã nguồn AMDGT, tìm hiểu kiến trúc Dual Graph Transformer và cơ chế Attention đa phương thức.
+Giai đoạn 2 (Cải tiến): Bổ sung nhánh Topology (đặc trưng cấu trúc đồ thị), Multi-view Similarity (tính tương đồng đa góc nhìn) và Contrastive Learning (học tương phản) để nâng cao độ ổn định.
+Giai đoạn 3 (Thực nghiệm): Huấn luyện mô hình trên 3 bộ dữ liệu chuẩn (C-dataset, F-dataset, B-dataset). Đánh giá qua các chỉ số AUC, AUPR.
+Giai đoạn 4 (Sản phẩm): Xây dựng Backend API bằng FastAPI, Frontend bằng PHP/Web 3D và cơ sở dữ liệu MySQL để quản lý lịch sử dự đoán.
+Chương 2:  GIẢI THÍCH THUẬT TOÁN VÀ MÔ HÌNH
+2.1 Mô hình gốc (AMDGT):
+Mô hình gốc sử dụng mạng học sâu trên đồ thị (GNN) để dự đoán tương tác dựa trên hai góc nhìn chính:
+Khai thác góc nhìn tương đồng (Similarity View): Sử dụng mạng Graph Transformer trên đồ thị tương đồng (Thuốc-Thuốc, Bệnh-Bệnh) để học và trích xuất các vector đặc trưng tương đồng của từng thực thể.
+Khai thác góc nhìn liên kết (Association View): Biến đổi đồ thị mạng lưới không đồng nhất (Thuốc - Bệnh - Protein) thành đồ thị đồng nhất và truyền qua mạng Heterogeneous Graph Transformer (HGT Vanilla) để khai thác thông tin cấu trúc liên kết.
+Dung hợp và Dự đoán: Kết hợp (stack) hai luồng đặc trưng trên và đưa qua mạng Transformer Encoder để học sự chú ý. Cuối cùng, đặc trưng của cặp Thuốc-Bệnh được nhân với nhau (element-wise) và đưa qua mạng Multi-Layer Perceptron (MLP) để phân loại khả năng tương tác.
+2.2 Thuật toán Mô hình Cải tiến (RLG-HGT / Multi-View HGT):
+Mô hình cải tiến được phát triển nhằm khắc phục sự rời rạc giữa các góc nhìn và tối ưu hóa khả năng khai thác đồ thị dị thể, với 5 điểm nâng cấp cốt lõi:
+Tích hợp Góc nhìn Cấu trúc Mạng (Topology View): Bổ sung thêm mô-đun TopologyEncoder để trực tiếp học các tham số cấu trúc mạng (Network Topology như Degree, Betweenness...) thành một góc nhìn thứ 3 độc lập.
+Học Đối chiếu Đa góc nhìn (Multi-View Contrastive Learning): Khai thác cơ chế học tự giám sát (Contrastive Loss) để ép các vector nhúng từ 3 góc nhìn (Tương đồng, Liên kết, Cấu trúc) phải có sự đồng nhất (alignment). Điều này giúp mô hình trích xuất được các đặc trưng mang tính tổng quát và bền vững hơn.
+Kiến trúc Đồ thị Dị thể Nâng cao (RLG-HGT): Thay thế HGT cơ bản bằng kiến trúc RLG-HGT (Relation-Level Gating HGT) do nhóm tự tùy biến. Mạng mới có khả năng tối ưu phân phối sự chú ý dựa trên siêu đường dẫn (metapath) và các loại quan hệ cụ thể.
+Cơ chế Dung hợp Thông minh (Fuzzy Gate / Cross-Attention): Thay vì chỉ ghép vector, mô hình cải tiến sử dụng cổng logic mờ (FuzzyGate) kết hợp Transformer để dung hợp. Nó lấy đặc trưng Topology làm hệ quy chiếu để tự động tinh chỉnh luồng thông tin đóng/mở cho từng góc nhìn, giúp tối ưu hóa việc chọn lọc đặc trưng.
+Khối Dự đoán Tương tác Phức hợp (Interaction Pair Head): Thay cho phép nhân đơn giản, bộ dự đoán mới kết hợp nhiều phép tính toán tương tác đồng thời (phép nhân, độ lệch tuyệt đối, khoảng cách Cosine, hàm Bilinear) kèm theo mạng nội suy có kết nối tắt (Skip Connection), giúp nắm bắt các quan hệ ẩn sâu hơn để phân loại chính xác.
+CHƯƠNG 3:  KẾT QUẢ THỰC NGHIỆM VÀ SO SÁNH
+3.1 Bảng so sánh kết quả
+Bảng kết quả AMDGT gốc:
+Tập B:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9157 | 0.9122
+Fold 2 | 0.9208 | 0.9189
+Fold 3 | 0.9201 | 0.9128
+Fold 4 | 0.9145 | 0.9120
+Fold 5 | 0.9074 | 0.9056
+Fold 6 | 0.9176 | 0.9123
+Fold 7 | 0.9101 | 0.9024
+Fold 8 | 0.9142 | 0.9104
+Fold 9 | 0.9151 | 0.9137
+Fold 10 | 0.9176 | 0.9120
+Mean | 0.9153 | 0.9112
+Std Dev | 0.0039 | 0.0043
+[/TABLE]
+Tập C:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9594 | 0.9621
+Fold 2 | 0.9501 | 0.9539
+Fold 3 | 0.9682 | 0.9703
+Fold 4 | 0.9687 | 0.9638
+Fold 5 | 0.9654 | 0.9678
+Fold 6 | 0.9749 | 0.9756
+Fold 7 | 0.9763 | 0.9792
+Fold 8 | 0.9684 | 0.9694
+Fold 9 | 0.9596 | 0.9634
+Fold 10 | 0.9737 | 0.9763
+Mean | 0.9665 | 0.9682
+Std Dev | 0.0077 | 0.0073
+[/TABLE]
+Tập F:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9606 | 0.9636
+Fold 2 | 0.9456 | 0.9542
+Fold 3 | 0.9531 | 0.9565
+Fold 4 | 0.9612 | 0.9567
+Fold 5 | 0.9531 | 0.9502
+Fold 6 | 0.9569 | 0.9558
+Fold 7 | 0.9514 | 0.9536
+Fold 8 | 0.9634 | 0.9684
+Fold 9 | 0.9769 | 0.9777
+Fold 10 | 0.9496 | 0.9568
+Mean | 0.9572 | 0.9594
+Std Dev | 0.0084 | 0.0078
+[/TABLE]
+Bảng kết quả AMDGT cải tiến:
+Tập B:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9302 | 0.9254
+Fold 2 | 0.9286 | 0.9208
+Fold 3 | 0.9323 | 0.9268
+Fold 4 | 0.9302 | 0.9245
+Fold 5 | 0.9238 | 0.9209
+Fold 6 | 0.9312 | 0.9268
+Fold 7 | 0.9242 | 0.9171
+Fold 8 | 0.9226 | 0.9201
+Fold 9 | 0.9290 | 0.9238
+Fold 10 | 0.9317 | 0.9238
+Mean | 0.9284 | 0.9230
+Std | 0.0036 | 0.0032
+[/TABLE]
+Tập C:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9718 | 0.9759
+Fold 2 | 0.9564 | 0.9567
+Fold 3 | 0.9675 | 0.9730
+Fold 4 | 0.9754 | 0.9744
+Fold 5 | 0.9732 | 0.9762
+Fold 6 | 0.9749 | 0.9764
+Fold 7 | 0.9765 | 0.9784
+Fold 8 | 0.9716 | 0.9745
+Fold 9 | 0.9738 | 0.9755
+Fold 10 | 0.9669 | 0.9700
+Mean | 0.9708 | 0.9731
+Std | 0.0060 | 0.0062
+[/TABLE]
+Tập F:
+[TABLE]
+Fold | AUC | AUPR
+Fold 1 | 0.9572 | 0.9545
+Fold 2 | 0.9543 | 0.9551
+Fold 3 | 0.9557 | 0.9522
+Fold 4 | 0.9689 | 0.9637
+Fold 5 | 0.9629 | 0.9607
+Fold 6 | 0.9631 | 0.9574
+Fold 7 | 0.9789 | 0.9689
+Fold 8 | 0.9696 | 0.9733
+Fold 9 | 0.9660 | 0.9672
+Fold 10 | 0.9542 | 0.9525
+Mean | 0.9631 | 0.9605
+Std | 0.0080 | 0.0074
+[/TABLE]
+3.2 Bảng Tổng Hợp So Sánh (Giá trị Trung Bình - Mean)
+[TABLE]
+Tập Dữ Liệu | Metric | Mô Hình Gốc | Mô Hình Cải Tiến | Độ Chênh Lệch (Cải tiến - Gốc)
+Tập B | AUC | 0.9153 ± 0.0039 | 0.9284 ± 0.0036 | + 0.0131 (tăng ~1.31%)
+ | AUPR | 0.9112 ± 0.0043 | 0.9230 ± 0.0032 | + 0.0118 (tăng ~1.18%)
+Tập C | AUC | 0.9665 ± 0.0077 | 0.9708 ± 0.0060 | + 0.0043 (tăng ~0.43%)
+ | AUPR | 0.9682 ± 0.0073 | 0.9731 ± 0.0062 | + 0.0049 (tăng ~0.49%)
+Tập F | AUC | 0.9572 ± 0.0084 | 0.9631 ± 0.0080 | + 0.0059 (tăng ~0.59%)
+ | AUPR | 0.9594 ± 0.0078 | 0.9605 ± 0.0074 | + 0.0011 (tăng ~0.11%)
+[/TABLE]
+a. Về Khả Năng Dự Đoán (Hiệu suất tổng thể):
+Sự cải thiện đồng đều: Mô hình cải tiến thể hiện sự vượt trội so với mô hình gốc trên tất cả các tập dữ liệu (B, C, F) ở cả hai chỉ số quan trọng là AUC và AUPR. Điều này chứng tỏ các kỹ thuật tối ưu hóa/cải tiến kiến trúc mà bạn áp dụng đã thực sự phát huy tác dụng.
+Đột phá trên tập dữ liệu khó (Tập B): Tập B dường như là tập dữ liệu khó dự đoán nhất đối với cả hai mô hình (chỉ số thấp nhất so với C và F). Tuy nhiên, đây lại là nơi mô hình cải tiến mang lại hiệu quả rõ rệt nhất. AUC tăng mạnh 1.31% và AUPR tăng 1.18%. Điều này cho thấy mô hình mới có khả năng trích xuất đặc trưng hoặc xử lý thông tin ẩn tốt hơn nhiều khi đối mặt với dữ liệu phức tạp/nhiễu.
+Tối ưu hóa trên tập dữ liệu dễ (Tập C & F): Trên hai tập C và F, mô hình gốc vốn dĩ đã có kết quả rất cao (AUC > 0.95). Dù không gian để cải thiện còn ít (tiệm cận mức hoàn hảo), mô hình cải tiến vẫn tiếp tục nâng cao được hiệu suất, đẩy mức AUC trên tập C vượt ngưỡng 0.97 (0.9708).
+b. Về Độ Ổn Định (Độ lệch chuẩn - Std Dev):
+Tính ổn định cao hơn: Nhìn vào độ lệch chuẩn (Std Dev) trên tất cả các phép thử, mô hình cải tiến luôn cho ra kết quả nhỏ hơn mô hình gốc.
+Ví dụ ở tập C, độ lệch chuẩn AUC giảm từ 0.0077 xuống 0.0060; AUPR giảm từ 0.0073 xuống 0.0062.
+Ý nghĩa: Độ lệch chuẩn nhỏ hơn chứng tỏ kết quả dự đoán giữa các fold (lần chạy khác nhau trong Cross-validation) ít bị biến động hơn. Mô hình cải tiến ít nhạy cảm hơn với cách chia tách dữ liệu ngẫu nhiên, cho thấy độ tin cậy và khả năng tổng quát hóa (generalization) trên dữ liệu mới tốt hơn đáng kể.
+Chương 4. VÍ DỤ MINH HỌA VÀ TRIỂN KHAI SẢN PHẨM
+Đầu vào:
+Người dùng thao tác trên giao diện web (Frontend) để cung cấp các thông tin:
+Bộ dữ liệu (Dataset): Chọn tập dữ liệu muốn dùng để dự đoán (B-dataset, C-dataset hoặc F-dataset). Mỗi bộ dữ liệu có đặc trưng và số lượng thuốc/bệnh/protein khác nhau.
+Thuốc (Drug): Chọn một loại thuốc cụ thể từ danh sách thả xuống.
+Bệnh (Disease): Chọn một loại bệnh cụ thể từ danh sách thả xuống.
+Quy trình xử lý:
+Tải dữ liệu & Mô hình: Backend Python nhận thông tin, tiến hành nạp (load) ma trận đặc trưng của tập dữ liệu tương ứng và tải trọng số (checkpoint) của mô hình học sâu.
+Tính toán (Inference):
+Thuốc và Bệnh được tìm kiếm trong Không gian Đồ thị Đa hình (Heterogeneous Graph) gồm 3 loại nút: Thuốc, Bệnh và Protein.
+Mô hình HGT (Heterogeneous Graph Transformer) sẽ thực hiện "truyền thông điệp" để trích xuất các đặc trưng tiềm ẩn và cấu trúc mạng lưới xung quanh cặp Thuốc - Bệnh đó.
+Cuối cùng, một lớp phân loại (Predictor/MLP) sẽ tính toán ra điểm số dự đoán
+Đầu ra: Danh sách so sánh mô hình gốc và mô hình cải tiến. Biểu đồ cột và sơ đồ liên kết 2D
+TÀI LIỆU THAM KHẢO
+I. Tài liệu học thuật (Bài báo khoa học)
+[1] PREDICT: a method for inferring novel drug indications with application to personalized medicine. Nguồn: https://doi.org/10.1038/msb.2011.26
+[2] MRDDA: a multi-relational graph neural network for drug-disease association prediction. Nguồn: https://doi.org/10.1186/s12967-025-06783-x
+[3] DD-HGNN+: Drug-disease Association Prediction via General Hypergraph Neural Network with Hierarchical Contrastive Learning and Cross Attention Learning. Nguồn: https://doi.org/10.1109/JBHI.2025.3542784
+[4] Predicting drug-disease associations through layer attention graph convolutional network (LAGCN). Nguồn: https://doi.org/10.1093/bib/bbaa243
+[5] AMDGT: Attention aware multi-modal fusion using a dual graph transformer for drug-disease associations prediction.
+[6] Drug-Disease Association Prediction Using Heterogeneous Networks for Computational Drug Repositioning. Nguồn: https://doi.org/10.3390/biom12101497
+[7] HGTDR: Advancing drug repurposing with heterogeneous graph transformers. Nguồn: https://doi.org/10.1093/bioinformatics/btae349
+[8] Drug repositioning based on comprehensive similarity measures and Bi-Random walk algorithm. Nguồn: https://doi.org/10.1093/bioinformatics/btw228
+II. Mã nguồn mở và Thư viện (GitHub Links)
+[1] [Mã nguồn gốc thuật toán AMDGT] JK-Liu7, "AMDGT - Code repository," GitHub, 2023. [Trực tuyến]. Nguồn: https://github.com/JK-Liu7/AMDGT
+[2] [Thư viện lõi DGL] Deep Graph Library Team, "DGL: Python package built to ease deep learning on graph," GitHub. [Trực tuyến]. Nguồn: https://github.com/dmlc/dgl
+[3] [Trực quan hóa Đồ thị 3D] Vasturiano, "3D-Force-Graph: 3D force-directed graph component using ThreeJS," GitHub. [Trực tuyến]. Nguồn: https://github.com/vasturiano/3d-force-graph
+[10] [Nền tảng Backend] Tiangolo, "FastAPI framework, high performance, easy to learn, fast to code, ready for production," GitHub. [Trực tuyến]. Nguồn: https://github.com/fastapi/fastapi

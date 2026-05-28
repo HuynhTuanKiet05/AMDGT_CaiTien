@@ -1,4 +1,4 @@
-"""
+﻿"""
 fetch_protein_names.py
 Tra cứu tên protein, tên gene từ UniProt Accession ID qua UniProt REST API.
 Áp dụng cho cả B-dataset, C-dataset, F-dataset.
@@ -11,7 +11,7 @@ import time
 import requests
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "AMDGT_original", "data")
+DATA_DIR = os.path.join(BASE_DIR, "AMDGT", "data")
 CACHE_DIR = os.path.join(BASE_DIR, "scripts", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_FILE = os.path.join(CACHE_DIR, "protein_name_map.json")

@@ -1,4 +1,4 @@
-# So Sánh Phần Model Train Của `Colab_V4` So Với `AMDGT` Gốc
+﻿# So Sánh Phần Model Train Của `Colab_V4` So Với `AMDGT` Gốc
 
 ## 1. Phạm vi tài liệu
 
@@ -13,7 +13,7 @@ Tài liệu này chỉ so sánh phần:
 Repo gốc đối chiếu:
 
 - GitHub: `https://github.com/JK-Liu7/AMDGT`
-- baseline trong workspace: `Colab_V4/AMDGT_original/`
+- baseline trong workspace: `Colab_V4/AMDGT/`
 
 ## 2. Tóm tắt các phần đã bổ sung để cải tiến
 
@@ -181,7 +181,7 @@ Trong repo này, contrastive loss được dùng giữa:
 
 File liên quan:
 
-- `AMDGT_original/data_preprocess.py`
+- `AMDGT/data_preprocess.py`
 - `data_preprocess_improved.py`
 
 ## 6.1. Bảng so sánh preprocess
@@ -475,7 +475,7 @@ Ghi chú trung thực:
 
 File liên quan:
 
-- `AMDGT_original/train_DDA.py`
+- `AMDGT/train_DDA.py`
 - `train_final.py`
 
 ## 12.1. Bảng so sánh training pipeline

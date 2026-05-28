@@ -17,20 +17,28 @@ Tài liệu này hướng dẫn bạn cách khởi chạy toàn bộ hệ thốn
 Backend AI chịu trách nhiệm tính toán và chạy mô hình học sâu.
 
 
-1.  **Mở Terminal** và di chuyển đến thư mục dự án.
-cd c:\xampp\htdocs\amdgt_final\Colab_V6
-
-2.  **Kích hoạt môi trường Conda**:
+1.  **Mở Terminal** và di chuyển đến thư mục dự án cục bộ của bạn, ví dụ:
     ```powershell
-     **Kích hoạt môi trường Venv**
-     .\.venv\Scripts\activate
-    
+    cd "d:\LapTrinh\Đồ án cơ sở\AMDGT_CaiTien"
     ```
+
+2.  **Kích hoạt môi trường ảo** (chọn 1 trong 2 cách):
+    *   **Nếu dùng Conda (amdgt_env):**
+    *   Tắt các môi trường đang chạy khác
+        conda deactivate
+        ```powershell
+        conda activate amdgt_env
+        ```
+    *   **Nếu dùng Venv (.venv):**
+        ```powershell
+        .\.venv\Scripts\activate
+        ```
+
 3.  **Di chuyển vào thư mục API**:
     ```powershell
     cd python_api
-    
     ```
+
 4.  **Chạy Server Uvicorn**:
     ```powershell
     uvicorn main:app --host 127.0.0.1 --port 8000 --reload

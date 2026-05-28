@@ -1,4 +1,4 @@
-import os
+﻿import os
 import torch
 import torch.nn as nn
 
@@ -19,7 +19,7 @@ def get_model(args, version=None):
         return ImprovedAMNTDDA(args)
     else:
         print(">>> Loading ORIGINAL AMDGT Model (Baseline) ...")
-        from AMDGT_original.model.AMNTDDA import AMNTDDA as BaseAMNTDDA
+        from AMDGT.model.AMNTDDA import AMNTDDA as BaseAMNTDDA
         return BaseAMNTDDA(args)
 
 # Để tương thích ngược với các script cũ thực hiện 'from model.AMNTDDA import AMNTDDA'

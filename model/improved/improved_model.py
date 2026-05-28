@@ -1,4 +1,4 @@
-import os
+﻿import os
 
 import dgl
 import dgl.nn.pytorch
@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from AMDGT_original.model import gt_net_disease, gt_net_drug
+from AMDGT.model import gt_net_disease, gt_net_drug
 
 from .contrastive_loss import MultiViewContrastiveLoss
 from .fuzzy_attention import FuzzyGate

@@ -3,7 +3,7 @@ Quick-train script: sinh checkpoint demo cho ORIGINAL + IMPROVED model.
 Chạy 1 fold, ít epoch trên CPU. KHÔNG dùng cho production, chỉ để demo web.
 
 Usage:
-    cd Colab_V4
+    cd AMDGT_CaiTien
     python scripts/generate_demo_checkpoints.py --dataset C-dataset --epochs 5
 """
 import argparse
@@ -22,14 +22,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'python_api'))
 
-from AMDGT_original.data_preprocess import (
+from AMDGT.data_preprocess import (
     dgl_similarity_graph as orig_sim_graph,
     dgl_heterograph as orig_hetero,
     get_data as orig_get_data,
     data_processing as orig_data_processing,
     k_fold as orig_k_fold,
 )
-from AMDGT_original.model.AMNTDDA import AMNTDDA as OriginalAMNTDDA
+from AMDGT.model.AMNTDDA import AMNTDDA as OriginalAMNTDDA
 
 from data_preprocess_improved import (
     dgl_similarity_graph as imp_sim_graph,
@@ -52,7 +52,7 @@ def train_original(args, epochs):
 
     orig_args = argparse.Namespace(
         dataset=args.dataset,
-        data_dir=str(PROJECT_ROOT / 'AMDGT_original' / 'data' / args.dataset),
+        data_dir=str(PROJECT_ROOT / 'AMDGT' / 'data' / args.dataset),
         k_fold=10,
         negative_rate=1.0,
         neighbor=20,
@@ -116,7 +116,7 @@ def train_improved(args, epochs):
 
     imp_args = argparse.Namespace(
         dataset=args.dataset,
-        data_dir=str(PROJECT_ROOT / 'AMDGT_original' / 'data' / args.dataset),
+        data_dir=str(PROJECT_ROOT / 'AMDGT' / 'data' / args.dataset),
         k_fold=10,
         negative_rate=1.0,
         neighbor=5,

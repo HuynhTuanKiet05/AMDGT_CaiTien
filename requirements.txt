@@ -1,0 +1,29 @@
+# ============================================================
+# Unified requirements for AMDGT_CaiTien project
+# Gộp từ: requirements-colab.txt + python_api/requirements.txt
+# Cài đặt: pip install -r requirements.txt
+# ============================================================
+
+# --- Core scientific computing ---
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.13.1; python_version < "3.10"
+scipy==1.14.1; python_version >= "3.10"
+
+# --- Machine Learning ---
+scikit-learn==1.5.2
+networkx==3.2.1
+
+# --- Deep Learning (PyTorch + DGL) ---
+# PyTorch: cài riêng theo hướng dẫn tại https://pytorch.org
+# DGL: cài riêng theo hướng dẫn tại https://www.dgl.ai/pages/start.html
+# torch
+# dgl
+
+# --- Web API (FastAPI) ---
+fastapi==0.115.8
+uvicorn==0.34.0
+pydantic==2.10.6
+
+# --- Utilities ---
+requests>=2.31.0

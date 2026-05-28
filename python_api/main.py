@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -21,15 +21,15 @@ sys.path.append(str(PROJECT_ROOT))
 
 from model.AMNTDDA import AMNTDDA
 from model.improved.improved_model import AMNTDDA as ImprovedAMNTDDA
-from AMDGT_original.model.AMNTDDA import AMNTDDA as OriginalAMNTDDA
-from AMDGT_original import data_preprocess as original_preprocess
+from AMDGT.model.AMNTDDA import AMNTDDA as OriginalAMNTDDA
+from AMDGT import data_preprocess as original_preprocess
 import data_preprocess_improved as improved_preprocess
 from topology_features import extract_topology_features
 
 if os.environ.get('HGT_MODEL_VERSION', 'improved') == 'improved':
     from data_preprocess_improved import dgl_similarity_graph, dgl_heterograph
 else:
-    from AMDGT_original.data_preprocess import dgl_similarity_graph, dgl_heterograph
+    from AMDGT.data_preprocess import dgl_similarity_graph, dgl_heterograph
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -104,7 +104,7 @@ class InferenceManager:
         self.disease_name_cache = self.load_json_map(PROJECT_ROOT / 'scripts' / 'cache' / 'disease_name_map.json')
 
     def get_dataset_paths(self, dataset_name: str):
-        data_dir = PROJECT_ROOT / 'AMDGT_original' / 'data' / dataset_name
+        data_dir = PROJECT_ROOT / 'AMDGT' / 'data' / dataset_name
         model_path = self.resolve_model_path(dataset_name)
         return data_dir, model_path
 
@@ -141,7 +141,7 @@ class InferenceManager:
                 candidate_roots.extend([
                     PROJECT_ROOT / 'Result' / 'original' / variant,
                     PROJECT_ROOT / 'Result' / variant / 'AMNTDDA',
-                    PROJECT_ROOT / 'AMDGT_original' / 'Result' / variant / 'AMNTDDA',
+                    PROJECT_ROOT / 'AMDGT' / 'Result' / variant / 'AMNTDDA',
                     PROJECT_ROOT / 'Result' / variant / 'RLGHGT_v2',
                 ])
             else:
@@ -542,7 +542,7 @@ class InferenceManager:
         if cache_key in self.cached_data:
             return self.cached_data[cache_key]
 
-        data_dir = PROJECT_ROOT / 'AMDGT_original' / 'data' / dataset_name
+        data_dir = PROJECT_ROOT / 'AMDGT' / 'data' / dataset_name
         if not data_dir.exists():
             raise HTTPException(status_code=404, detail=f"Dataset directory not found: {dataset_name}")
 
@@ -913,6 +913,7 @@ async def predict(payload: PredictRequest):
             'type': 'protein',
             'color': '#f59e0b',
             'seq_len': len(seq),
+            'sequence': seq,
             'support': protein_hit_count.get(protein_idx, 1),
         }
         append_graph_link(source_node_id, protein_node_id, 'source-protein', min(0.95, 0.35 + 0.12 * protein_hit_count.get(protein_idx, 1)))
@@ -1028,6 +1029,148 @@ async def predict_pairs(payload: PairPredictRequest):
 
     ranked_pairs = sorted(pairs, key=lambda item: float(item['improved_score']), reverse=True)
 
+    # Build graph with shared bridge proteins
+    drug_proteins: Dict[int, List[int]] = {}
+    for drug in resolved_drugs:
+        drug_idx = ctx['drugs_info'].index(drug)
+        drug_proteins[drug_idx] = manager.get_related_protein_indices(ctx, 'drug', drug_idx, limit=None)
+
+    disease_proteins: Dict[int, List[int]] = {}
+    for disease in resolved_diseases:
+        disease_idx = ctx['disease_info'].index(disease)
+        disease_proteins[disease_idx] = manager.get_related_protein_indices(ctx, 'disease', disease_idx, limit=None)
+
+    protein_hit_count: Dict[int, int] = {}
+    active_drug_protein: Set[Tuple[int, int]] = set()
+    active_protein_disease: Set[Tuple[int, int]] = set()
+
+    for drug in resolved_drugs:
+        drug_idx = ctx['drugs_info'].index(drug)
+        for disease in resolved_diseases:
+            disease_idx = ctx['disease_info'].index(disease)
+            disease_set = set(disease_proteins[disease_idx])
+            shared = [p_idx for p_idx in drug_proteins[drug_idx] if p_idx in disease_set]
+            
+            for p_idx in shared:
+                protein_hit_count[p_idx] = protein_hit_count.get(p_idx, 0) + 1
+                active_drug_protein.add((drug_idx, p_idx))
+                active_protein_disease.add((p_idx, disease_idx))
+
+    ranked_protein_indices = sorted(
+        protein_hit_count.keys(),
+        key=lambda p_idx: (protein_hit_count[p_idx], -p_idx),
+        reverse=True,
+    )[:8]
+
+    if not ranked_protein_indices:
+        # Fallback: get some proteins associated with any of the selected drugs
+        fallback_set = set()
+        for drug_idx, p_list in drug_proteins.items():
+            for p_idx in p_list[:3]:
+                fallback_set.add(p_idx)
+        ranked_protein_indices = list(fallback_set)[:6]
+
+    graph_node_map: Dict[str, Dict[str, object]] = {}
+    graph_links: List[Dict[str, object]] = []
+    seen_edges = set()
+
+    def append_graph_link(source_id: str, target_id: str, kind: str, score_value: float) -> None:
+        edge_key = (source_id, target_id, kind)
+        if edge_key in seen_edges:
+            return
+        seen_edges.add(edge_key)
+        graph_links.append({
+            'source': source_id,
+            'target': target_id,
+            'kind': kind,
+            'score': float(round(score_value, 4)),
+        })
+
+    for drug in resolved_drugs:
+        drug_node_id = f"drug:{drug['id']}"
+        graph_node_map[drug_node_id] = {
+            'id': drug_node_id,
+            'actual_id': drug['id'],
+            'label': drug.get('name', drug['id']),
+            'type': 'drug',
+            'color': '#2563eb',
+            'smiles': drug.get('smiles', ''),
+            'is_source': True,
+        }
+
+    for disease in resolved_diseases:
+        disease_node_id = f"disease:{disease['id']}"
+        graph_node_map[disease_node_id] = {
+            'id': disease_node_id,
+            'actual_id': disease['id'],
+            'label': disease.get('name', disease['id']),
+            'type': 'disease',
+            'color': '#dc2626',
+            'smiles': '',
+            'score': 0.0,
+            'support_count': 1,
+        }
+
+    selected_protein_set = set(ranked_protein_indices)
+    for p_idx in ranked_protein_indices:
+        if p_idx >= len(ctx['protein_info']):
+            continue
+        protein = ctx['protein_info'][p_idx]
+        protein_node_id = f"protein:{protein['id']}"
+        label = protein.get('protein_name', protein.get('name', protein['id']))
+        seq = protein.get('sequence', '')
+        graph_node_map[protein_node_id] = {
+            'id': protein_node_id,
+            'actual_id': protein['id'],
+            'label': label,
+            'type': 'protein',
+            'color': '#f59e0b',
+            'seq_len': len(seq),
+            'support': protein_hit_count.get(p_idx, 1),
+        }
+
+    # Edges
+    for pair in pairs:
+        drug_node_id = f"drug:{pair['drug_id']}"
+        disease_node_id = f"disease:{pair['disease_id']}"
+        append_graph_link(drug_node_id, disease_node_id, 'prediction', pair['improved_score'])
+
+    for p_idx in ranked_protein_indices:
+        if p_idx >= len(ctx['protein_info']):
+            continue
+        protein = ctx['protein_info'][p_idx]
+        protein_node_id = f"protein:{protein['id']}"
+        
+        for drug in resolved_drugs:
+            drug_idx = ctx['drugs_info'].index(drug)
+            if (drug_idx, p_idx) in active_drug_protein:
+                drug_node_id = f"drug:{drug['id']}"
+                append_graph_link(drug_node_id, protein_node_id, 'source-protein', min(0.95, 0.35 + 0.12 * protein_hit_count.get(p_idx, 1)))
+            elif not protein_hit_count:
+                drug_node_id = f"drug:{drug['id']}"
+                append_graph_link(drug_node_id, protein_node_id, 'source-protein', 0.45)
+
+        for disease in resolved_diseases:
+            disease_idx = ctx['disease_info'].index(disease)
+            if (p_idx, disease_idx) in active_protein_disease:
+                disease_node_id = f"disease:{disease['id']}"
+                append_graph_link(protein_node_id, disease_node_id, 'protein-target', 0.85)
+
+    graph_nodes = []
+    for drug in resolved_drugs:
+        drug_node_id = f"drug:{drug['id']}"
+        if drug_node_id in graph_node_map:
+            graph_nodes.append(graph_node_map[drug_node_id])
+    for p_idx in ranked_protein_indices:
+        if p_idx >= len(ctx['protein_info']):
+            continue
+        protein_node_id = f"protein:{ctx['protein_info'][p_idx]['id']}"
+        if protein_node_id in graph_node_map:
+            graph_nodes.append(graph_node_map[protein_node_id])
+    for disease in resolved_diseases:
+        disease_node_id = f"disease:{disease['id']}"
+        if disease_node_id in graph_node_map:
+            graph_nodes.append(graph_node_map[disease_node_id])
 
     return {
         'status': 'success',
@@ -1052,6 +1195,7 @@ async def predict_pairs(payload: PairPredictRequest):
         'pairs': pairs,
         'ranked_pairs': ranked_pairs,
         'matrix': matrix,
+        'graph': {'nodes': graph_nodes, 'links': graph_links},
         'note': f"Đã chấm {len(pairs)} cặp thuốc-bệnh từ {len(resolved_drugs)} thuốc và {len(resolved_diseases)} bệnh đã chọn. {note}",
     }
 
@@ -1070,7 +1214,7 @@ async def compare_predict_removed():
 def list_entities(dataset: str = 'C-dataset'):
     if dataset not in DATASET_PRESETS:
         raise HTTPException(status_code=422, detail=f"Dataset không hợp lệ: {dataset}")
-    data_dir = PROJECT_ROOT / 'AMDGT_original' / 'data' / dataset
+    data_dir = PROJECT_ROOT / 'AMDGT' / 'data' / dataset
     if not data_dir.exists():
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset}")
     

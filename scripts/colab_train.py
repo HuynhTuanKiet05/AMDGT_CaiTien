@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument('--preset', default='standard', choices=['smoke', 'standard', 'full'])
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--mount-drive', action=argparse.BooleanOptionalAction, default=False, help='mount Google Drive before training')
-    parser.add_argument('--drive-root', default='/content/drive/MyDrive/Colab_V4_runs', help='base output folder when using Drive')
+    parser.add_argument('--drive-root', default='/content/drive/MyDrive/AMDGT_CaiTien_runs', help='base output folder when using Drive')
     parser.add_argument('--data-root', default=None, help='override dataset directory')
     parser.add_argument('--result-root', default=None, help='override result directory')
     parser.add_argument('--epochs', type=int, default=None)
@@ -81,7 +81,7 @@ def main():
     maybe_mount_drive(args.mount_drive)
 
     preset = build_preset(args)
-    data_root = Path(args.data_root) if args.data_root else repo_root / 'AMDGT_original' / 'data' / args.dataset
+    data_root = Path(args.data_root) if args.data_root else repo_root / 'AMDGT' / 'data' / args.dataset
     if args.result_root:
         result_root = Path(args.result_root)
     elif args.mount_drive:

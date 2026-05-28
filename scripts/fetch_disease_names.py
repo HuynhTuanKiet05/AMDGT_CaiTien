@@ -1,4 +1,4 @@
-"""
+﻿"""
 fetch_disease_names.py
 Tra cứu tên bệnh từ OMIM ID (định dạng Dxxxxxx) qua EBI OLS4 API.
 Áp dụng cho C-dataset và F-dataset.
@@ -11,7 +11,7 @@ import requests
 import pandas as pd
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "AMDGT_original", "data")
+DATA_DIR = os.path.join(BASE_DIR, "AMDGT", "data")
 CACHE_DIR = os.path.join(BASE_DIR, "scripts", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_FILE = os.path.join(CACHE_DIR, "disease_name_map.json")

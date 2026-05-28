@@ -1,4 +1,4 @@
-"""
+﻿"""
 generate_metadata_csv.py
 Dùng cache JSON đã fetch để tạo ra các file CSV metadata mới cho từng dataset.
 Chạy SAU khi đã chạy xong fetch_disease_names.py và fetch_protein_names.py.
@@ -8,7 +8,7 @@ import json
 import csv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "AMDGT_original", "data")
+DATA_DIR = os.path.join(BASE_DIR, "AMDGT", "data")
 CACHE_DIR = os.path.join(BASE_DIR, "scripts", "cache")
 
 DISEASE_CACHE = os.path.join(CACHE_DIR, "disease_name_map.json")

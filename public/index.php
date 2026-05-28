@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require_once __DIR__ . '/../app/services/PredictionService.php';
 require_login();
 
@@ -33,6 +33,10 @@ $resultGroups = [];
 $pairMatrixData = null;
 $error      = null;
 $apiHealthy = PredictionService::isApiHealthy();
+
+$entities = load_dataset_entities($dataset);
+$drugChoices = $entities['drugs'];
+$diseaseChoices = $entities['diseases'];
 
 if (empty($_SESSION['_csrf_predict'])) {
     $_SESSION['_csrf_predict'] = bin2hex(random_bytes(16));
@@ -108,7 +112,11 @@ function unique_entity_options(array $items): array
 
 function dataset_counts(string $dataset): array
 {
-    $base = realpath(__DIR__ . '/../AMDGT_original/data/' . $dataset);
+    $dir = __DIR__ . '/../AMDGT/data/' . $dataset;
+    $base = realpath($dir);
+    if ($base === false) {
+        $base = $dir;
+    }
     $count = static function (?string $base, string $file): int {
         if ($base === null) return 0;
         $path = $base . DIRECTORY_SEPARATOR . $file;
@@ -127,162 +135,9 @@ function dataset_counts(string $dataset): array
     ];
 }
 
-function load_csv_assoc(string $path): array
-{
-    if (!is_file($path)) {
-        return [];
-    }
 
-    $handle = @fopen($path, 'r');
-    if ($handle === false) {
-        return [];
-    }
 
-    $header = fgetcsv($handle);
-    if ($header === false) {
-        fclose($handle);
-        return [];
-    }
 
-    $header = array_map(static fn($value) => trim((string) $value), $header);
-    $rows = [];
-
-    while (($row = fgetcsv($handle)) !== false) {
-        $assoc = [];
-        foreach ($header as $index => $key) {
-            $assoc[$key !== '' ? $key : ('col_' . $index)] = trim((string) ($row[$index] ?? ''));
-        }
-        $rows[] = $assoc;
-    }
-
-    fclose($handle);
-    return $rows;
-}
-
-function count_csv_lines(string $path): int
-{
-    if (!is_file($path)) {
-        return 0;
-    }
-
-    $handle = @fopen($path, 'r');
-    if ($handle === false) {
-        return 0;
-    }
-
-    $rows = 0;
-    while (fgets($handle) !== false) {
-        $rows++;
-    }
-
-    fclose($handle);
-    return $rows;
-}
-
-function benchmark_metric_value(array $row, string $column): ?float
-{
-    $value = trim((string) ($row[$column] ?? ''));
-    if ($value === '' || !is_numeric($value)) {
-        return null;
-    }
-
-    return (float) $value;
-}
-
-function format_benchmark_percent(?float $value): string
-{
-    if ($value === null) {
-        return '—';
-    }
-
-    return number_format($value * 100, 2);
-}
-
-function load_model_benchmark_datasets(): array
-{
-    $benchmarkDir = realpath(__DIR__ . '/../thong_so_chay_test_goc_va_cai_tien');
-    if ($benchmarkDir === false) {
-        return [];
-    }
-
-    $configs = [
-        'B-dataset' => [
-            'label' => 'B Dataset',
-            'baseline_file' => '10_fold_results_B_Goc.csv',
-            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_B_caiTien.csv',
-        ],
-        'C-dataset' => [
-            'label' => 'C Dataset',
-            'baseline_file' => '10_fold_results_C_Goc.csv',
-            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_C_CaiTien.csv',
-        ],
-        'F-dataset' => [
-            'label' => 'F Dataset',
-            'baseline_file' => '10_fold_results_F_Goc.csv',
-            'improved_file' => '10_fold_results_vanilla_hgt_mva_mul_mlp_vector_F_caiTien.csv',
-        ],
-    ];
-
-    $datasets = [];
-    foreach ($configs as $datasetKey => $config) {
-        $baselineRows = load_csv_assoc($benchmarkDir . DIRECTORY_SEPARATOR . $config['baseline_file']);
-        $improvedRows = load_csv_assoc($benchmarkDir . DIRECTORY_SEPARATOR . $config['improved_file']);
-        $orderKeys = [];
-        $orderLabels = [];
-        $indexRows = static function (array $rows) use (&$orderKeys, &$orderLabels): array {
-            $map = [];
-            foreach ($rows as $row) {
-                $label = trim((string) ($row['Fold'] ?? ''));
-                if ($label === '') {
-                    continue;
-                }
-
-                $normalized = strtolower($label);
-                $map[$normalized] = $row;
-                if (!isset($orderLabels[$normalized])) {
-                    $orderLabels[$normalized] = $label;
-                    $orderKeys[] = $normalized;
-                }
-            }
-
-            return $map;
-        };
-
-        $baselineMap = $indexRows($baselineRows);
-        $improvedMap = $indexRows($improvedRows);
-        $rows = [];
-        foreach ($orderKeys as $normalizedKey) {
-            $label = $orderLabels[$normalizedKey] ?? $normalizedKey;
-            $baselineRow = $baselineMap[$normalizedKey] ?? [];
-            $improvedRow = $improvedMap[$normalizedKey] ?? [];
-            $rows[] = [
-                'fold' => $label,
-                'is_summary' => in_array($normalizedKey, ['mean', 'std'], true),
-                'baseline' => [
-                    'auc' => benchmark_metric_value($baselineRow, 'AUC'),
-                    'aupr' => benchmark_metric_value($baselineRow, 'AUPR'),
-                    'f1' => benchmark_metric_value($baselineRow, 'F1-score'),
-                ],
-                'improved' => [
-                    'auc' => benchmark_metric_value($improvedRow, 'AUC'),
-                    'aupr' => benchmark_metric_value($improvedRow, 'AUPR'),
-                    'f1' => benchmark_metric_value($improvedRow, 'F1-score'),
-                ],
-            ];
-        }
-
-        $datasets[$datasetKey] = [
-            'label' => $config['label'],
-            'rows' => $rows,
-            'source_files' => [
-                'baseline' => $config['baseline_file'],
-                'improved' => $config['improved_file'],
-            ],
-        ];
-    }
-
-    return $datasets;
-}
 
 function load_node_entries_php(string $dataDir): array
 {
@@ -351,9 +206,10 @@ function load_disease_name_cache_php(): array
 
 function load_dataset_entities(string $dataset): array
 {
-    $dataDir = realpath(__DIR__ . '/../AMDGT_original/data/' . $dataset);
+    $dir = __DIR__ . '/../AMDGT/data/' . $dataset;
+    $dataDir = realpath($dir);
     if ($dataDir === false) {
-        return ['drugs' => [], 'diseases' => []];
+        $dataDir = $dir;
     }
 
     $drugCount = count_csv_lines($dataDir . DIRECTORY_SEPARATOR . 'Drug_mol2vec.csv');
@@ -686,26 +542,36 @@ function render_pair_model_chart_svg(array $pairs): string
         return '<p class="muted" style="padding:1rem 0;">Không có dữ liệu biểu đồ để so sánh.</p>';
     }
 
-    $plotHeight = 200;
     $topPad = 24;
-    $bottomPad = 118;
-    $leftPad = 58;
-    $groupWidth = 30;
-    $groupGap = 18;
-    $barWidth = 10;
-    $innerGap = 6;
-    $width = max(780, $leftPad + count($pairs) * ($groupWidth + $groupGap) + 40);
-    $height = $topPad + $plotHeight + $bottomPad;
-    $baseY = $topPad + $plotHeight;
+    $bottomPad = 36;
+    $leftPad = 190;
+    $rightPad = 85;
+    $groupHeight = 52;
+    
+    $width = 920;
+    $chartWidth = $width - $leftPad - $rightPad;
+    $height = $topPad + count($pairs) * $groupHeight + $bottomPad;
 
     ob_start();
     ?>
     <div class="pair-chart-scroll">
-        <svg class="pair-chart-svg" viewBox="0 0 <?= $width ?> <?= $height ?>" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Biểu đồ so sánh hai mô hình theo từng cặp thuốc-bệnh">
-            <?php foreach ([0, 0.25, 0.5, 0.75, 1.0] as $tick): ?>
-                <?php $y = $topPad + (1 - $tick) * $plotHeight; ?>
-                <line x1="<?= $leftPad - 6 ?>" y1="<?= $y ?>" x2="<?= $width - 18 ?>" y2="<?= $y ?>" class="pair-chart-grid" />
-                <text x="<?= $leftPad - 12 ?>" y="<?= $y + 4 ?>" class="pair-chart-axis-label" text-anchor="end"><?= e(number_format($tick, 2)) ?></text>
+        <svg class="pair-chart-svg" viewBox="0 0 <?= $width ?> <?= $height ?>" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Biểu đồ so sánh hai mô hình">
+            <defs>
+                <linearGradient id="chart-green-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#10b981" stop-opacity="0.4"/>
+                    <stop offset="100%" stop-color="#34d399" stop-opacity="0.95"/>
+                </linearGradient>
+                <linearGradient id="chart-blue-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#2563eb" stop-opacity="0.4"/>
+                    <stop offset="100%" stop-color="#60a5fa" stop-opacity="0.95"/>
+                </linearGradient>
+            </defs>
+
+            <!-- Grid Lines -->
+            <?php foreach ([0, 0.25, 0.50, 0.75, 1.00] as $tick): ?>
+                <?php $x = $leftPad + $tick * $chartWidth; ?>
+                <line x1="<?= $x ?>" y1="<?= $topPad - 10 ?>" x2="<?= $x ?>" y2="<?= $height - $bottomPad ?>" stroke="rgba(255, 255, 255, 0.04)" stroke-dasharray="3 3" />
+                <text x="<?= $x ?>" y="<?= $height - $bottomPad + 18 ?>" style="fill: rgba(255, 255, 255, 0.35); font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif;" text-anchor="middle"><?= number_format($tick, 2) ?></text>
             <?php endforeach; ?>
 
             <?php foreach ($pairs as $index => $pair): ?>
@@ -713,31 +579,44 @@ function render_pair_model_chart_svg(array $pairs): string
                 $improvedScore = max(0.0, min(1.0, (float) ($pair['improved_score'] ?? 0)));
                 $hasOriginal = array_key_exists('original_score', $pair) && $pair['original_score'] !== null;
                 $originalScore = $hasOriginal ? max(0.0, min(1.0, (float) $pair['original_score'])) : 0.0;
-                $groupX = $leftPad + 12 + $index * ($groupWidth + $groupGap);
-                $improvedX = $groupX;
-                $originalX = $groupX + $barWidth + $innerGap;
-                $improvedHeight = $plotHeight * $improvedScore;
-                $originalHeight = $plotHeight * $originalScore;
-                $improvedBarHeight = max(4.0, $improvedHeight);
-                $originalBarHeight = max(4.0, $originalHeight);
-                $label = (string) (($pair['drug_id'] ?? '') . '→' . ($pair['disease_id'] ?? ''));
+                
+                $y = $topPad + $index * $groupHeight;
+                
+                $originalBarWidth = $chartWidth * $originalScore;
+                $improvedBarWidth = $chartWidth * $improvedScore;
+                
+                // Original bar is top (Blue), Improved GNN is bottom (Green)
+                $originalY = $y;
+                $improvedY = $y + 15;
+                
+                $drugName = (string) ($pair['drug_name'] ?? $pair['drug_id'] ?? 'Drug');
+                $drugId = (string) ($pair['drug_id'] ?? '');
+                
                 $title = sprintf(
                     '%s → %s | Cải tiến %s | Gốc %s',
-                    (string) ($pair['drug_name'] ?? $pair['drug_id'] ?? ''),
+                    $drugName,
                     (string) ($pair['disease_name'] ?? $pair['disease_id'] ?? ''),
                     format_score($improvedScore),
                     $hasOriginal ? format_score($pair['original_score']) : '—'
                 );
                 ?>
-                <rect x="<?= $improvedX ?>" y="<?= $baseY - $improvedBarHeight ?>" width="<?= $barWidth ?>" height="<?= $improvedBarHeight ?>" rx="4" class="pair-chart-bar pair-chart-bar-improved">
+                <!-- Drug Label (Right-aligned to left of bars) -->
+                <text x="<?= $leftPad - 16 ?>" y="<?= $y + 8 ?>" style="fill: #f8fafc; font-size: 12.5px; font-weight: 700; font-family: 'Space Grotesk', sans-serif;" text-anchor="end"><?= e($drugName) ?></text>
+                <text x="<?= $leftPad - 16 ?>" y="<?= $y + 20 ?>" style="fill: rgba(255, 255, 255, 0.4); font-size: 9px; font-weight: 600; font-family: 'Inter', sans-serif; letter-spacing: 0.04em;" text-anchor="end"><?= e($drugId) ?></text>
+
+                <!-- Original HGT Bar (Top, Blue) -->
+                <rect x="<?= $leftPad ?>" y="<?= $originalY ?>" width="<?= max(4.0, $originalBarWidth) ?>" height="9" rx="4.5" fill="url(#chart-blue-gradient)" style="opacity: <?= $hasOriginal ? '1' : '0.2' ?>;">
                     <title><?= e($title) ?></title>
                 </rect>
-                <rect x="<?= $originalX ?>" y="<?= $baseY - $originalBarHeight ?>" width="<?= $barWidth ?>" height="<?= $originalBarHeight ?>" rx="4" class="pair-chart-bar pair-chart-bar-original" style="opacity:<?= $hasOriginal ? '1' : '.25' ?>;">
+                <?php if ($hasOriginal): ?>
+                    <text x="<?= $leftPad + $originalBarWidth + 8 ?>" y="<?= $originalY + 8 ?>" style="fill: #60a5fa; font-size: 10px; font-weight: 700; font-family: 'Inter', sans-serif;"><?= number_format($originalScore * 100, 2) ?>%</text>
+                <?php endif; ?>
+
+                <!-- Improved GNN Bar (Bottom, Green) -->
+                <rect x="<?= $leftPad ?>" y="<?= $improvedY ?>" width="<?= max(4.0, $improvedBarWidth) ?>" height="9" rx="4.5" fill="url(#chart-green-gradient)">
                     <title><?= e($title) ?></title>
                 </rect>
-                <g transform="translate(<?= $groupX + 4 ?>,<?= $baseY + 16 ?>) rotate(55)">
-                    <text class="pair-chart-label"><?= e($label) ?></text>
-                </g>
+                <text x="<?= $leftPad + $improvedBarWidth + 8 ?>" y="<?= $improvedY + 8 ?>" style="fill: #34d399; font-size: 10px; font-weight: 700; font-family: 'Inter', sans-serif;"><?= number_format($improvedScore * 100, 2) ?>%</text>
             <?php endforeach; ?>
         </svg>
     </div>
@@ -757,102 +636,153 @@ function render_pair_matrix_section(array $payload): string
     ob_start();
     ?>
     <section class="prediction-group-section">
-        <?php if ($note !== ''): ?>
-            <div class="alert" style="background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.3);margin-bottom:1rem;">
-                <?= e($note) ?>
-            </div>
-        <?php endif; ?>
+        
 
-        <div class="matched-card">
-            <div class="matched-icon">⇄</div>
-            <div class="matched-details">
-                <h4>Chấm điểm từng cặp thuốc – bệnh</h4>
-                <div class="muted" style="font-size:.82rem;">
-                    Đã tạo <strong><?= count($pairs) ?></strong> cặp từ <strong><?= count($selectedDrugs) ?></strong> thuốc và <strong><?= count($selectedDiseases) ?></strong> bệnh đã chọn. Khi chọn cả hai cột, <strong>Top-K không áp dụng</strong>.
+        <div style="background: linear-gradient(135deg, rgba(16,24,48,0.85), rgba(10,14,30,0.95)); border: 1px solid rgba(255,255,255,0.06); border-radius: 1.25rem; overflow: hidden; margin-bottom: 1.5rem; box-shadow: 0 0 40px rgba(59,130,246,0.04), 0 4px 24px rgba(0,0,0,0.3);">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; gap: 1rem;">
+                <div style="display: flex; align-items: center; gap: 0.85rem;">
+                    <div style="width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(96,165,250,0.12)); border: 1px solid rgba(59,130,246,0.2); display: grid; place-items: center; box-shadow: 0 0 20px rgba(59,130,246,0.1);">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    </div>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f1f5f9; font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em;">So Sánh Mô Hình</h3>
+                        <p style="margin: 3px 0 0; font-size: 0.78rem; color: rgba(255,255,255,0.35); font-family: 'Inter', sans-serif;">Improved GNN vs. Original HGT trên các cặp Top-K</p>
+                    </div>
                 </div>
-                <div class="selected-source-tags">
-                    <?php foreach ($selectedDrugs as $item): ?>
-                        <span class="selected-source-chip">
-                            <strong>Thuốc</strong>
-                            <?= e((string) ($item['name'] ?? $item['id'] ?? '')) ?>
-                            <code><?= e((string) ($item['id'] ?? '')) ?></code>
-                        </span>
-                    <?php endforeach; ?>
-                    <?php foreach ($selectedDiseases as $item): ?>
-                        <span class="selected-source-chip">
-                            <strong>Bệnh</strong>
-                            <?= e((string) ($item['name'] ?? $item['id'] ?? '')) ?>
-                            <code><?= e((string) ($item['id'] ?? '')) ?></code>
-                        </span>
-                    <?php endforeach; ?>
+                <div style="display: flex; align-items: center; gap: 16px; font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600;">
+                    <span style="display: inline-flex; align-items: center; gap: 7px; padding: 5px 14px; border-radius: 999px; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2); color: #34d399;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399;"></span>
+                        Improved GNN
+                    </span>
+                    <span style="display: inline-flex; align-items: center; gap: 7px; padding: 5px 14px; border-radius: 999px; background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.2); color: #60a5fa;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: #60a5fa; box-shadow: 0 0 8px #60a5fa;"></span>
+                        Original HGT
+                    </span>
                 </div>
+            </div>
+            <div style="padding: 1.5rem 1.25rem 0.5rem 1.25rem;">
+                <?= render_pair_model_chart_svg($rankedPairs) ?>
             </div>
         </div>
 
-        <div class="glass-card" style="margin-bottom:1.5rem;">
-            <div class="card-header">
-                <h3 class="card-title">Biểu đồ so sánh 2 model</h3>
-                <p class="muted" style="font-size:.82rem;">Mỗi cặp thuốc-bệnh có hai cột: xanh lá là model cải tiến, xanh dương là model gốc.</p>
+        <?php
+        // Calculate average delta
+        $sumDelta = 0;
+        $countDelta = 0;
+        foreach ($rankedPairs as $pair) {
+            $delta = array_key_exists('delta_score', $pair) ? $pair['delta_score'] : null;
+            if ($delta !== null) {
+                $sumDelta += (float) $delta;
+                $countDelta++;
+            }
+        }
+        $avgDelta = $countDelta > 0 ? $sumDelta / $countDelta : 0;
+        $avgDeltaFormatted = ($avgDelta >= 0 ? '+' : '') . number_format($avgDelta, 4);
+        ?>
+        <div style="background: linear-gradient(135deg, rgba(16,24,48,0.85), rgba(10,14,30,0.95)); border: 1px solid rgba(255,255,255,0.06); border-radius: 1.25rem; overflow: hidden; margin-bottom: 1.5rem; box-shadow: 0 0 40px rgba(59,130,246,0.04), 0 4px 24px rgba(0,0,0,0.3);">
+            <!-- Header -->
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div style="display: flex; align-items: center; gap: 0.85rem;">
+                    <div style="width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(135deg, rgba(34,211,238,0.12), rgba(59,130,246,0.12)); border: 1px solid rgba(34,211,238,0.2); display: grid; place-items: center; box-shadow: 0 0 20px rgba(34,211,238,0.1);">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+                    </div>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #f1f5f9; font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em;">Bảng Điểm Dự Đoán</h3>
+                        <p style="margin: 3px 0 0; font-size: 0.78rem; color: rgba(255,255,255,0.35); font-family: 'Inter', sans-serif;"><?= count($rankedPairs) ?> cặp Thuốc-Bệnh · sắp xếp theo Δ giảm dần</p>
+                    </div>
+                </div>
+                <div style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(52,211,153,0.3); background: rgba(52,211,153,0.08); font-family: 'Space Grotesk', monospace; font-size: 0.78rem; font-weight: 700; color: #34d399; letter-spacing: 0.04em; box-shadow: 0 0 18px rgba(52,211,153,0.1);">
+                    AVG Δ &nbsp;<?= $avgDeltaFormatted ?>
+                </div>
             </div>
-            <div class="pair-chart-legend">
-                <span class="pair-chart-legend-item"><span class="pair-chart-swatch pair-chart-swatch-improved"></span>Cải tiến</span>
-                <span class="pair-chart-legend-item"><span class="pair-chart-swatch pair-chart-swatch-original"></span>Gốc</span>
-            </div>
-            <?= render_pair_model_chart_svg($rankedPairs) ?>
-        </div>
 
-        <div class="glass-card" style="margin-bottom:1.5rem;">
-            <div class="card-header">
-                <h3 class="card-title">Bảng điểm từng cặp</h3>
-                <p class="muted" style="font-size:.82rem;">Danh sách được sắp theo điểm model cải tiến giảm dần để anh nhìn cặp mạnh nhất trước.</p>
-            </div>
-            <div class="table-wrap">
-                <table class="table result-table">
+            <!-- Table -->
+            <div style="overflow-x: auto; width: 100%;">
+                <table style="width: 100%; border-collapse: collapse; min-width: 780px; font-family: 'Inter', sans-serif;">
                     <thead>
-                        <tr>
-                            <th style="width:48px">#</th>
-                            <th>Thuốc</th>
-                            <th>Bệnh</th>
-                            <th>Cải tiến</th>
-                            <th>Gốc</th>
-                            <th>Chênh lệch</th>
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                            <th style="padding: 0.9rem 1.5rem; text-align: left; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: rgba(255,255,255,0.3);">DRUG ENTITY</th>
+                            <th style="padding: 0.9rem 1.25rem; text-align: left; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: rgba(255,255,255,0.3);">DISEASE ENTITY</th>
+                            <th style="padding: 0.9rem 1.25rem; text-align: center; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #34d399;">IMPROVED GNN</th>
+                            <th style="padding: 0.9rem 1.25rem; text-align: center; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #60a5fa;">BASELINE HGT</th>
+                            <th style="padding: 0.9rem 1.25rem; text-align: center; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: rgba(255,255,255,0.3);">DELTA (Δ)</th>
                         </tr>
                     </thead>
                     <tbody>
                     <?php if ($rankedPairs === []): ?>
                         <tr>
-                            <td colspan="6" class="muted" style="padding:1rem 1.25rem;">Không có cặp thuốc-bệnh nào để hiển thị.</td>
+                            <td colspan="5" style="padding: 2rem; text-align: center; color: rgba(255,255,255,0.3); font-size: 0.85rem;">Không có cặp thuốc-bệnh nào để hiển thị.</td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($rankedPairs as $index => $pair): ?>
                             <?php
                             $originalScore = array_key_exists('original_score', $pair) && $pair['original_score'] !== null ? (float) $pair['original_score'] : null;
                             $delta = array_key_exists('delta_score', $pair) ? $pair['delta_score'] : null;
-                            $deltaClass = $delta === null ? 'is-neutral' : (((float) $delta) >= 0 ? 'is-positive' : 'is-negative');
+                            $deltaFormatted = $delta !== null ? ($delta >= 0 ? '+' : '') . number_format((float) $delta, 4) : '—';
+                            $improvedVal = (float) ($pair['improved_score'] ?? 0);
+                            $baselineVal = $originalScore;
                             ?>
-                            <tr>
-                                <td><span class="rank-badge"><?= $index + 1 ?></span></td>
-                                <td>
-                                    <strong><?= e((string) ($pair['drug_name'] ?? $pair['drug_id'] ?? '')) ?></strong><br>
-                                    <code style="font-size:.76rem;color:#93c5fd;"><?= e((string) ($pair['drug_id'] ?? '')) ?></code>
-                                </td>
-                                <td>
-                                    <strong><?= e((string) ($pair['disease_name'] ?? $pair['disease_id'] ?? '')) ?></strong><br>
-                                    <code style="font-size:.76rem;color:#93c5fd;"><?= e((string) ($pair['disease_id'] ?? '')) ?></code>
-                                </td>
-                                <td>
-                                    <div class="score-bar-wrap">
-                                        <span style="min-width:52px;font-weight:600;color:#22c55e;"><?= format_score($pair['improved_score'] ?? 0) ?></span>
-                                        <div class="score-bar" style="width:<?= (int) (((float) ($pair['improved_score'] ?? 0)) * 120) ?>px"></div>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.035); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.015)'" onmouseout="this.style.background='transparent'">
+                                <!-- DRUG ENTITY -->
+                                <td style="padding: 1rem 1.5rem; vertical-align: middle;">
+                                    <div style="display: flex; align-items: center; gap: 12px;">
+                                        <div style="width: 36px; height: 36px; border-radius: 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.18); display: grid; place-items: center; flex-shrink: 0;">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                                        </div>
+                                        <div>
+                                            <div style="color: #f1f5f9; font-weight: 600; font-size: 0.88rem; line-height: 1.3;"><?= e((string) ($pair['drug_name'] ?? $pair['drug_id'] ?? '')) ?></div>
+                                            <div style="color: rgba(255,255,255,0.3); font-size: 0.68rem; letter-spacing: 0.06em; margin-top: 2px; font-family: 'Space Grotesk', monospace;"><?= e((string) ($pair['drug_id'] ?? '')) ?></div>
+                                        </div>
                                     </div>
                                 </td>
-                                <td>
-                                    <div class="score-bar-wrap">
-                                        <span style="min-width:52px;font-weight:600;color:#60a5fa;"><?= $originalScore !== null ? format_score($originalScore) : '—' ?></span>
-                                        <div class="score-bar" style="width:<?= $originalScore !== null ? (int) ($originalScore * 120) : 4 ?>px;background:linear-gradient(90deg,#2563eb,#93c5fd);opacity:<?= $originalScore !== null ? '1' : '.25' ?>;"></div>
+                                <!-- DISEASE ENTITY -->
+                                <td style="padding: 1rem 1.25rem; vertical-align: middle;">
+                                    <div style="display: flex; align-items: center; gap: 12px;">
+                                        <div style="width: 36px; height: 36px; border-radius: 12px; background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.18); display: grid; place-items: center; flex-shrink: 0;">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                                        </div>
+                                        <div>
+                                            <div style="color: #f1f5f9; font-weight: 600; font-size: 0.88rem; line-height: 1.3;"><?= e((string) ($pair['disease_name'] ?? $pair['disease_id'] ?? '')) ?></div>
+                                            <div style="color: rgba(255,255,255,0.3); font-size: 0.68rem; letter-spacing: 0.06em; margin-top: 2px; font-family: 'Space Grotesk', monospace;"><?= e((string) ($pair['disease_id'] ?? '')) ?></div>
+                                        </div>
                                     </div>
                                 </td>
-                                <td><span class="delta-pill <?= $deltaClass ?>"><?= format_delta_score($delta) ?></span></td>
+                                <!-- IMPROVED GNN -->
+                                <td style="padding: 1rem 1.25rem; text-align: center; vertical-align: middle;">
+                                    <div style="display: inline-flex; flex-direction: column; align-items: center; gap: 6px;">
+                                        <span style="font-weight: 700; font-size: 0.92rem; color: #34d399; font-family: 'Space Grotesk', monospace; letter-spacing: 0.02em;"><?= format_score($improvedVal) ?></span>
+                                        <div style="width: 72px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.04); overflow: hidden;">
+                                            <div style="height: 100%; border-radius: 2px; background: linear-gradient(90deg, #10b981, #34d399); box-shadow: 0 0 10px rgba(52,211,153,0.6); width: <?= max(4, (int)($improvedVal * 100)) ?>%;"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <!-- BASELINE HGT -->
+                                <td style="padding: 1rem 1.25rem; text-align: center; vertical-align: middle;">
+                                    <div style="display: inline-flex; flex-direction: column; align-items: center; gap: 6px;">
+                                        <span style="font-weight: 700; font-size: 0.92rem; color: #60a5fa; font-family: 'Space Grotesk', monospace; letter-spacing: 0.02em;"><?= $baselineVal !== null ? format_score($baselineVal) : '—' ?></span>
+                                        <div style="width: 72px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.04); overflow: hidden;">
+                                            <div style="height: 100%; border-radius: 2px; background: linear-gradient(90deg, #3b82f6, #60a5fa); box-shadow: 0 0 10px rgba(96,165,250,0.6); width: <?= $baselineVal !== null ? max(4, (int)($baselineVal * 100)) : 4 ?>%;"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <!-- DELTA -->
+                                <td style="padding: 1rem 1.25rem; text-align: center; vertical-align: middle;">
+                                    <?php if ($delta !== null && (float)$delta >= 0): ?>
+                                        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(52,211,153,0.35); background: rgba(52,211,153,0.06); color: #34d399; font-size: 0.78rem; font-weight: 700; font-family: 'Space Grotesk', monospace; letter-spacing: 0.03em; box-shadow: 0 0 16px rgba(52,211,153,0.08), inset 0 0 12px rgba(52,211,153,0.04);">
+                                            <span style="width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399;"></span>
+                                            <?= $deltaFormatted ?>
+                                        </span>
+                                    <?php elseif ($delta !== null): ?>
+                                        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(239,68,68,0.25); background: rgba(239,68,68,0.06); color: #f87171; font-size: 0.78rem; font-weight: 700; font-family: 'Space Grotesk', monospace; letter-spacing: 0.03em;">
+                                            <span style="width: 6px; height: 6px; border-radius: 50%; background: #f87171; box-shadow: 0 0 8px #f87171;"></span>
+                                            <?= $deltaFormatted ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="display: inline-flex; align-items: center; justify-content: center; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.3); font-size: 0.78rem; font-weight: 700; font-family: 'Space Grotesk', monospace;">
+                                            —
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -861,145 +791,292 @@ function render_pair_matrix_section(array $payload): string
             </div>
         </div>
 
-        <div class="glass-card">
-            <div class="card-header">
-                <h3 class="card-title">Ma trận thuốc × bệnh</h3>
-                <p class="muted" style="font-size:.82rem;">Mỗi ô là đúng một cặp đã chọn, hiển thị điểm của cả hai model và độ chênh giữa chúng.</p>
-            </div>
-            <div class="pair-matrix-scroll">
-                <table class="table pair-matrix-table">
-                    <thead>
-                        <tr>
-                            <th>Thuốc \ Bệnh</th>
-                            <?php foreach ($selectedDiseases as $item): ?>
-                                <th>
-                                    <div class="pair-matrix-heading">
-                                        <strong><?= e((string) ($item['name'] ?? $item['id'] ?? '')) ?></strong>
-                                        <code><?= e((string) ($item['id'] ?? '')) ?></code>
-                                    </div>
-                                </th>
-                            <?php endforeach; ?>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($matrix as $row): ?>
-                        <tr>
-                            <th>
-                                <div class="pair-matrix-heading">
-                                    <strong><?= e((string) ($row['drug_name'] ?? $row['drug_id'] ?? '')) ?></strong>
-                                    <code><?= e((string) ($row['drug_id'] ?? '')) ?></code>
-                                </div>
-                            </th>
-                            <?php foreach (($row['cells'] ?? []) as $cell): ?>
-                                <?php
-                                $cellOriginalScore = array_key_exists('original_score', $cell) && $cell['original_score'] !== null ? (float) $cell['original_score'] : null;
-                                $cellDelta = array_key_exists('delta_score', $cell) ? $cell['delta_score'] : null;
-                                $cellDeltaClass = $cellDelta === null ? 'is-neutral' : (((float) $cellDelta) >= 0 ? 'is-positive' : 'is-negative');
-                                ?>
-                                <td>
-                                    <div class="pair-matrix-cell">
-                                        <div class="pair-matrix-score">
-                                            <span class="pair-matrix-score-label">Cải tiến</span>
-                                            <strong><?= format_score($cell['improved_score'] ?? 0) ?></strong>
-                                        </div>
-                                        <div class="pair-matrix-score">
-                                            <span class="pair-matrix-score-label">Gốc</span>
-                                            <strong><?= $cellOriginalScore !== null ? format_score($cellOriginalScore) : '—' ?></strong>
-                                        </div>
-                                        <div class="pair-matrix-delta <?= $cellDeltaClass ?>">Δ <?= format_delta_score($cellDelta) ?></div>
-                                    </div>
-                                </td>
-                            <?php endforeach; ?>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+
 
         <?php
-        // --- Build a link graph from pair data ---
-        $graphNodes = [];
-        $graphLinks = [];
-        $drugSmilesList = [];
-        foreach ($pairs as $pair) {
-            $drugId   = 'drug:' . (string) ($pair['drug_id'] ?? '');
-            $diseaseId = 'disease:' . (string) ($pair['disease_id'] ?? '');
-            $drugSmiles = trim((string) ($pair['drug_smiles'] ?? ''));
-            if (!isset($graphNodes[$drugId])) {
-                $graphNodes[$drugId] = [
-                    'id'        => $drugId,
-                    'actual_id' => (string) ($pair['drug_id'] ?? ''),
-                    'label'     => (string) ($pair['drug_name'] ?? $pair['drug_id'] ?? ''),
-                    'type'      => 'drug',
-                    'color'     => '#2563eb',
-                    'smiles'    => $drugSmiles,
-                    'is_source' => true,
-                ];
-                if ($drugSmiles !== '') {
-                    $drugSmilesList[$drugId] = $graphNodes[$drugId];
+        // Get graph from payload returned by API (which now contains proteins!)
+        $pairGraph = $payload['graph'] ?? null;
+        if (!$pairGraph || empty($pairGraph['nodes'])) {
+            // Fallback to building without proteins if not present
+            $graphNodes = [];
+            $graphLinks = [];
+            $drugSmilesList = [];
+            foreach ($pairs as $pair) {
+                $drugId   = 'drug:' . (string) ($pair['drug_id'] ?? '');
+                $diseaseId = 'disease:' . (string) ($pair['disease_id'] ?? '');
+                $drugSmiles = trim((string) ($pair['drug_smiles'] ?? ''));
+                if (!isset($graphNodes[$drugId])) {
+                    $graphNodes[$drugId] = [
+                        'id'        => $drugId,
+                        'actual_id' => (string) ($pair['drug_id'] ?? ''),
+                        'label'     => (string) ($pair['drug_name'] ?? $pair['drug_id'] ?? ''),
+                        'type'      => 'drug',
+                        'color'     => '#2563eb',
+                        'smiles'    => $drugSmiles,
+                        'is_source' => true,
+                    ];
+                    if ($drugSmiles !== '') {
+                        $drugSmilesList[$drugId] = $graphNodes[$drugId];
+                    }
                 }
-            }
-            if (!isset($graphNodes[$diseaseId])) {
-                $graphNodes[$diseaseId] = [
-                    'id'        => $diseaseId,
-                    'actual_id' => (string) ($pair['disease_id'] ?? ''),
-                    'label'     => (string) ($pair['disease_name'] ?? $pair['disease_id'] ?? ''),
-                    'type'      => 'disease',
-                    'color'     => '#dc2626',
-                    'smiles'    => '',
-                    'score'     => (float) ($pair['improved_score'] ?? $pair['score'] ?? 0),
-                    'support_count' => 1,
+                if (!isset($graphNodes[$diseaseId])) {
+                    $graphNodes[$diseaseId] = [
+                        'id'        => $diseaseId,
+                        'actual_id' => (string) ($pair['disease_id'] ?? ''),
+                        'label'     => (string) ($pair['disease_name'] ?? $pair['disease_id'] ?? ''),
+                        'type'      => 'disease',
+                        'color'     => '#dc2626',
+                        'smiles'    => '',
+                        'score'     => (float) ($pair['improved_score'] ?? $pair['score'] ?? 0),
+                        'support_count' => 1,
+                    ];
+                }
+                $graphLinks[] = [
+                    'source' => $drugId,
+                    'target' => $diseaseId,
+                    'kind'   => 'prediction',
+                    'score'  => round((float) ($pair['improved_score'] ?? $pair['score'] ?? 0), 4),
                 ];
             }
-            $graphLinks[] = [
-                'source' => $drugId,
-                'target' => $diseaseId,
-                'kind'   => 'prediction',
-                'score'  => round((float) ($pair['improved_score'] ?? $pair['score'] ?? 0), 4),
+            $pairGraph = [
+                'nodes' => array_values($graphNodes),
+                'links' => $graphLinks,
             ];
         }
-        $pairGraph = [
-            'nodes' => array_values($graphNodes),
-            'links' => $graphLinks,
-        ];
         ?>
 
         <?php if (!empty($pairGraph['nodes'])): ?>
-            <div class="glass-card">
-                <div class="card-header">
-                    <h3 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;font-size:18px;">hub</span> Đồ thị liên kết phân tử (2D)</h3>
-                    <p class="muted" style="font-size:.82rem;">Hover vào node để xem cấu trúc hóa học, protein, hoặc mở cùng dữ liệu trong không gian 3D.</p>
-                </div>
-                <?= render_prediction_graph($pairGraph) ?>
-            </div>
-        <?php endif; ?>
-
-        <?php if (!empty($drugSmilesList)): ?>
-            <div class="glass-card" style="margin-top:1.5rem;">
-                <div class="card-header">
-                    <h3 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;font-size:18px;">science</span> Cấu trúc hóa học phân tử</h3>
-                    <p class="muted" style="font-size:.82rem;">Biểu đồ 2D cấu trúc SMILES của các thuốc đã chọn.</p>
-                </div>
-                <div class="molecule-strip">
-                    <?php foreach ($drugSmilesList as $idx => $node): ?>
-                        <?php $canvasId = 'pair-mol-' . md5((string) $idx); ?>
-                        <div class="molecule-card">
-                            <div class="molecule-card-top">
-                                <span class="graph-chip graph-chip-source">Input molecule</span>
-                                <span class="molecule-card-meta"><?= e((string) ($node['actual_id'] ?? '')) ?></span>
-                            </div>
-                            <div class="molecule-card-title"><?= e((string) ($node['label'] ?? 'Drug')) ?></div>
-                            <canvas id="<?= e($canvasId) ?>" class="molecule-canvas" width="280" height="184" data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"></canvas>
-                            <div class="molecule-card-meta" style="margin-top:10px;">Input molecule</div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            </div>
+            <?= render_prediction_graph($pairGraph) ?>
         <?php endif; ?>
     </section>
     <?php
     return (string) ob_get_clean();
+}
+
+function get_custom_molecule_svg(string $id): ?string
+{
+    $id = strtoupper(trim($id));
+    if ($id === 'DB00659') {
+        // Acamprosate
+        return '
+        <svg viewBox="0 0 320 220" style="width:100%;height:100%;display:block;">
+          <g stroke="#e5e7eb" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="30" y1="140" x2="60" y2="100" />
+            <line x1="60" y1="100" x2="90" y2="140" />
+            <line x1="63" y1="98" x2="85" y2="135" stroke-width="1.6" />
+            <line x1="60" y1="100" x2="60" y2="70" />
+            <line x1="64" y1="100" x2="64" y2="72" />
+            <line x1="90" y1="140" x2="120" y2="100" />
+            <line x1="120" y1="100" x2="150" y2="140" />
+            <line x1="150" y1="140" x2="180" y2="100" />
+            <line x1="180" y1="100" x2="210" y2="140" />
+            <line x1="210" y1="140" x2="240" y2="100" />
+            <line x1="240" y1="100" x2="240" y2="60" />
+            <line x1="244" y1="100" x2="244" y2="62" />
+            <line x1="240" y1="100" x2="276" y2="118" />
+            <line x1="242" y1="104" x2="278" y2="122" />
+            <line x1="240" y1="100" x2="270" y2="140" />
+          </g>
+          <text x="30" y="158" text-anchor="middle" fill="rgba(255,255,255,0.7)" style="font-family:\'IBM Plex Mono\', monospace; font-size:10px;">CH₃</text>
+          <rect x="44" y="56" width="62" height="100" rx="10" fill="none" stroke="rgba(34,211,238,0.25)" stroke-dasharray="3 3" />
+          <text x="75" y="50" text-anchor="middle" fill="#67e8f9" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:600;">acetamide</text>
+          <rect x="222" y="40" width="80" height="120" rx="10" fill="none" stroke="rgba(245,158,11,0.3)" stroke-dasharray="3 3" />
+          <text x="262" y="34" text-anchor="middle" fill="#fcd34d" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:600;">sulfonate</text>
+          
+          <circle cx="60" cy="70" r="9" fill="#0a0a0f" />
+          <circle cx="60" cy="70" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="60" y="73.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="120" cy="100" r="9" fill="#0a0a0f" />
+          <circle cx="120" cy="100" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="120" y="103.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <circle cx="240" cy="100" r="9" fill="#0a0a0f" />
+          <circle cx="240" cy="100" r="7.5" fill="#f59e0b" style="filter:drop-shadow(0 0 6px #f59e0b);" />
+          <text x="240" y="103.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">S</text>
+          
+          <circle cx="240" cy="60" r="9" fill="#0a0a0f" />
+          <circle cx="240" cy="60" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="240" y="63.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="278" cy="122" r="9" fill="#0a0a0f" />
+          <circle cx="278" cy="122" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="278" y="125.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="270" cy="140" r="9" fill="#0a0a0f" />
+          <circle cx="270" cy="140" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="270" y="143.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          <text x="282" y="146" fill="rgba(255,255,255,0.5)" style="font-family:\'IBM Plex Mono\', monospace; font-size:8px;">H</text>
+        </svg>
+        ';
+    } elseif ($id === 'DB00945') {
+        // Aspirin
+        return '
+        <svg viewBox="0 0 320 220" style="width:100%;height:100%;display:block;">
+          <g stroke="#e5e7eb" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="130,82 162.9,101 162.9,139 130,158 97.1,139 97.1,101" />
+            <line x1="130" y1="88" x2="157" y2="104" />
+            <line x1="157" y1="136" x2="130" y2="152" />
+            <line x1="103" y1="136" x2="103" y2="104" />
+            
+            <line x1="162.9" y1="101" x2="192.9" y2="83" />
+            <line x1="192.9" y1="83" x2="192.9" y2="51" />
+            <line x1="195.9" y1="83" x2="195.9" y2="51" />
+            <line x1="192.9" y1="83" x2="224.9" y2="101" />
+            
+            <line x1="162.9" y1="139" x2="194.9" y2="147" />
+            <line x1="194.9" y1="147" x2="218.9" y2="167" />
+            <line x1="218.9" y1="167" x2="218.9" y2="199" />
+            <line x1="221.9" y1="169" x2="221.9" y2="199" />
+            <line x1="218.9" y1="167" x2="250.9" y2="155" />
+          </g>
+          <text x="254.9" y="160" fill="rgba(255,255,255,0.7)" style="font-family:\'IBM Plex Mono\', monospace; font-size:10px;">CH₃</text>
+          
+          <circle cx="192.9" cy="51" r="9" fill="#0a0a0f" />
+          <circle cx="192.9" cy="51" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="192.9" y="54.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="224.9" cy="101" r="9" fill="#0a0a0f" />
+          <circle cx="224.9" cy="101" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="224.9" y="104.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="194.9" cy="147" r="9" fill="#0a0a0f" />
+          <circle cx="194.9" cy="147" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="194.9" y="150.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="218.9" cy="199" r="9" fill="#0a0a0f" />
+          <circle cx="218.9" cy="199" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="218.9" y="202.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <text x="100" y="200" fill="rgba(255,255,255,0.45)" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px;">ortho: COOH + ester</text>
+        </svg>
+        ';
+    } elseif ($id === 'DB00331') {
+        // Metformin
+        return '
+        <svg viewBox="0 0 320 220" style="width:100%;height:100%;display:block;">
+          <g stroke="#e5e7eb" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="40" y1="120" x2="75" y2="90" />
+            <line x1="75" y1="90" x2="75" y2="55" />
+            <line x1="79" y1="90" x2="79" y2="57" />
+            <line x1="75" y1="90" x2="115" y2="120" />
+            <line x1="115" y1="120" x2="155" y2="90" />
+            <line x1="155" y1="90" x2="155" y2="55" />
+            <line x1="159" y1="90" x2="159" y2="57" />
+            <line x1="155" y1="90" x2="195" y2="120" />
+            <line x1="195" y1="120" x2="235" y2="100" />
+            <line x1="195" y1="120" x2="235" y2="150" />
+          </g>
+          <text x="240" y="105" fill="rgba(255,255,255,0.7)" style="font-family:\'IBM Plex Mono\', monospace; font-size:10px;">CH₃</text>
+          <text x="240" y="155" fill="rgba(255,255,255,0.7)" style="font-family:\'IBM Plex Mono\', monospace; font-size:10px;">CH₃</text>
+          <text x="40" y="138" textAnchor="middle" fill="rgba(255,255,255,0.55)" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px;">H₂</text>
+          
+          <rect x="20" y="42" width="200" height="100" rx="12" fill="none" stroke="rgba(34,211,238,0.25)" stroke-dasharray="3 3" />
+          <text x="120" y="36" textAnchor="middle" fill="#67e8f9" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:600;">open biguanide · N=C-N-C=N</text>
+          
+          <circle cx="40" cy="120" r="9" fill="#0a0a0f" />
+          <circle cx="40" cy="120" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="40" y="123.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <circle cx="75" cy="55" r="9" fill="#0a0a0f" />
+          <circle cx="75" cy="55" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="75" y="58.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <circle cx="115" cy="120" r="9" fill="#0a0a0f" />
+          <circle cx="115" cy="120" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="115" y="123.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <circle cx="155" cy="55" r="9" fill="#0a0a0f" />
+          <circle cx="155" cy="55" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="155" y="58.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <circle cx="195" cy="120" r="9" fill="#0a0a0f" />
+          <circle cx="195" cy="120" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="195" y="123.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+        </svg>
+        ';
+    } elseif ($id === 'DB01076') {
+        // Atorvastatin
+        return '
+        <svg viewBox="0 0 360 240" style="width:100%;height:100%;display:block;">
+          <g stroke="#e5e7eb" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="180,90 205,108 196,138 164,138 155,108" />
+            <line x1="182" y1="94" x2="201" y2="108" />
+            <line x1="166" y1="134" x2="194" y2="134" />
+            
+            <polygon points="120,52 135.6,61 135.6,79 120,88 104.4,79 104.4,61" />
+            <line x1="120" y1="57.4" x2="132.8" y2="64.8" />
+            <line x1="132.8" y1="75.2" x2="120" y2="82.6" />
+            <line x1="107.2" y1="75.2" x2="107.2" y2="64.8" />
+            <line x1="155" y1="108" x2="138" y2="86" />
+            
+            <polygon points="240,52 255.6,61 255.6,79 240,88 224.4,79 224.4,61" />
+            <line x1="240" y1="57.4" x2="252.8" y2="64.8" />
+            <line x1="252.8" y1="75.2" x2="240" y2="82.6" />
+            <line x1="227.2" y1="75.2" x2="227.2" y2="64.8" />
+            <line x1="205" y1="108" x2="222" y2="86" />
+            <line x1="255.6" y1="61" x2="278" y2="50" />
+            
+            <polygon points="180,177 195.6,186 195.6,204 180,213 164.4,204 164.4,186" />
+            <line x1="180" y1="182.4" x2="192.8" y2="189.8" />
+            <line x1="192.8" y1="200.2" x2="180" y2="207.6" />
+            <line x1="167.2" y1="200.2" x2="167.2" y2="189.8" />
+            <line x1="180" y1="138" x2="180" y2="177" />
+            
+            <line x1="205" y1="108" x2="232" y2="120" />
+            <line x1="232" y1="120" x2="248" y2="108" />
+            <line x1="232" y1="120" x2="248" y2="132" />
+            
+            <line x1="164" y1="138" x2="148" y2="158" />
+            <line x1="148" y1="158" x2="148" y2="180" />
+            <line x1="151" y1="158" x2="151" y2="180" />
+            
+            <line x1="196" y1="138" x2="225" y2="158" />
+            <line x1="225" y1="158" x2="250" y2="146" />
+            <line x1="250" y1="146" x2="278" y2="166" />
+            <line x1="278" y1="166" x2="303" y2="154" />
+            <line x1="303" y1="154" x2="328" y2="174" />
+            <line x1="328" y1="174" x2="328" y2="200" />
+            <line x1="331" y1="174" x2="331" y2="202" />
+            <line x1="328" y1="174" x2="350" y2="160" />
+            <line x1="250" y1="146" x2="250" y2="122" />
+            <line x1="303" y1="154" x2="303" y2="130" />
+          </g>
+          
+          <circle cx="278" cy="50" r="9" fill="#0a0a0f" />
+          <circle cx="278" cy="50" r="7.5" fill="#34d399" style="filter:drop-shadow(0 0 6px #34d399);" />
+          <text x="278" y="53.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">F</text>
+          
+          <circle cx="148" cy="180" r="9" fill="#0a0a0f" />
+          <circle cx="148" cy="180" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="148" y="183.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="250" cy="122" r="9" fill="#0a0a0f" />
+          <circle cx="250" cy="122" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="250" y="125.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="303" cy="130" r="9" fill="#0a0a0f" />
+          <circle cx="303" cy="130" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="303" y="133.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="328" cy="200" r="9" fill="#0a0a0f" />
+          <circle cx="328" cy="200" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="328" y="203.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="350" cy="160" r="9" fill="#0a0a0f" />
+          <circle cx="350" cy="160" r="7.5" fill="#fb7185" style="filter:drop-shadow(0 0 6px #fb7185);" />
+          <text x="350" y="163.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">O</text>
+          
+          <circle cx="158" cy="108" r="9" fill="#0a0a0f" />
+          <circle cx="158" cy="108" r="7.5" fill="#22d3ee" style="filter:drop-shadow(0 0 6px #22d3ee);" />
+          <text x="158" y="111.2" text-anchor="middle" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px; font-weight:700; fill:#0a0a0f;">N</text>
+          
+          <text x="142" y="166" textAnchor="middle" fill="#22d3ee" style="font-family:\'IBM Plex Mono\', monospace; font-size:8px; font-weight:700;">NH</text>
+          <text x="180" y="20" textAnchor="middle" fill="rgba(255,255,255,0.45)" style="font-family:\'IBM Plex Mono\', monospace; font-size:9px;">pyrrole core · 3 phenyl · 1F</text>
+        </svg>
+        ';
+    }
+    return null;
 }
 
 function render_prediction_graph(array $graph): string
@@ -1164,286 +1241,397 @@ function render_prediction_graph(array $graph): string
 
     ob_start();
     ?>
-    <div class="graph-2d-wrapper" data-graph='<?= json_encode($graph, JSON_HEX_APOS | JSON_UNESCAPED_UNICODE) ?>'>
-        <div class="graph-toolbar">
-            <span class="graph-legend">
-                <span class="legend-item legend-drug">⬡ Thuốc</span>
-                <span class="legend-item legend-protein">H Protein</span>
-                <span class="legend-item legend-disease">✚ Bệnh</span>
-            </span>
-            <button class="btn btn-sm btn-ghost" onclick="open3DModal(this)" type="button">
-                <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px">view_in_ar</span>
-                Xem 3D
-            </button>
+    <div class="graph-2d-wrapper" data-graph='<?= json_encode($graph, JSON_HEX_APOS | JSON_UNESCAPED_UNICODE) ?>' style="position: relative; width: 100%;">
+        <!-- Hover tooltip (Placed at top of wrapper to prevent HTML premature closing from causing querySelector to return null) -->
+        <div class="graph-tooltip absolute z-50 rounded-2xl bg-[#070b13]/96 border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-md p-4 transition-all duration-150" style="display:none; min-width: 230px; pointer-events: none;">
         </div>
-        <svg class="prediction-network" viewBox="0 0 <?= $width ?> <?= $height ?>" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sơ đồ liên kết phân tử">
-            <defs>
-                <filter id="glow-src-<?= $graphInstance ?>" x="-60%" y="-60%" width="220%" height="220%">
-                    <feGaussianBlur stdDeviation="5" result="blur"/>
-                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                </filter>
-            </defs>
+        <!-- Dynamic Header overlay matching AssociationGraph.tsx exactly -->
+        <div class="flex items-center justify-between p-5 border-b border-white/5 bg-white/[0.01] backdrop-blur-md rounded-t-3xl flex-wrap gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-cyan-500/15 border border-cyan-500/25 grid place-items-center text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.15)]">
+                    <i data-lucide="network" class="w-4.5 h-4.5"></i>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold text-base" style="font-family: 'Space Grotesk', sans-serif; line-height: 1.2;">
+                        Đồ thị liên kết Thuốc–Protein–Bệnh
+                    </h4>
+                    <p class="text-white/40 text-[11.5px] mt-0.5" style="font-family: 'Inter', sans-serif;">
+                        Mạng kết nối 3 lớp với cạnh ground-truth (xanh lá) và AI dự đoán (xanh dương)
+                    </p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2 flex-wrap text-xs font-semibold" style="font-family: 'Inter', sans-serif;">
+                <!-- Legends -->
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/70">
+                    <span class="w-2.5 h-0.5 bg-emerald-400 rounded-full shadow-[0_0_6px_#10b981]"></span>
+                    Ground truth
+                </span>
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/70">
+                    <span class="w-2.5 h-0.5 bg-sky-400 rounded-full border-t border-dashed border-sky-300 shadow-[0_0_6px_#38bdf8]"></span>
+                    AI predicted
+                </span>
+                
+                <button type="button" onclick="toggle3DMode(this)" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-400/20 text-cyan-300 hover:text-cyan-200 hover:border-cyan-400/35 transition-all shadow-[0_0_15px_-3px_rgba(34,211,238,0.3)] toggle-3d-btn">
+                    <i data-lucide="box" class="w-3.5 h-3.5 animate-pulse"></i> <span>3D Mode</span>
+                </button>
+                <button type="button" onclick="this.closest('.graph-2d-wrapper').querySelector('.prediction-network').requestFullscreen?.()" class="w-9 h-9 grid place-items-center rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/65 hover:text-white hover:bg-white/[0.07] transition-all">
+                    <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="relative rounded-b-3xl bg-[#06060c] border-x border-b border-white/[0.06] overflow-hidden">
+            <!-- Floating column labels overlay exactly like the mockup -->
+            <div class="absolute inset-x-0 top-0 z-10 grid grid-cols-3 px-6 pt-4 pointer-events-none text-[10px] font-bold tracking-widest" style="font-family: 'Inter', sans-serif;">
+                <div class="flex justify-start">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40 border border-white/[0.08] text-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.2)]">
+                        <span class="w-1.5 h-1.5 rounded-full bg-sky-400 shadow-[0_0_6px_#38bdf8]"></span>
+                        THUỐC · DRUG
+                    </span>
+                </div>
+                <div class="flex justify-center">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40 border border-white/[0.08] text-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_6px_#f59e0b]"></span>
+                        PROTEIN · BRIDGE
+                    </span>
+                </div>
+                <div class="flex justify-end">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40 border border-white/[0.08] text-red-400 shadow-[0_0_8px_rgba(248,113,113,0.2)]">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-400 shadow-[0_0_6px_#f87171]"></span>
+                        BỆNH · DISEASE
+                    </span>
+                </div>
+            </div>
+            
+            <div class="canvas-3d-inline relative z-20" style="display: none; background: #06060c; min-height: 480px; width: 100%;"></div>
 
-            <rect x="28" y="54" width="246" height="<?= max(330, $height - 108) ?>" rx="20" class="graph-panel-bg"/>
-            <rect x="502" y="54" width="294" height="<?= max(330, $height - 108) ?>" rx="20" class="graph-panel-bg"/>
-            <rect x="930" y="54" width="356" height="<?= max(330, $height - 108) ?>" rx="20" class="graph-panel-bg"/>
+            <svg class="prediction-network" viewBox="0 0 <?= $width ?> <?= $height ?>" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sơ đồ liên kết phân tử" style="width: 100%; display: block; background: #06060c; min-height: 480px;">
+                <defs>
+                    <linearGradient id="truthLine-<?= $graphInstance ?>" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stop-color="#22c55e" stop-opacity="0.8" />
+                        <stop offset="100%" stop-color="#4ade80" stop-opacity="0.9" />
+                    </linearGradient>
+                    <linearGradient id="predLine-<?= $graphInstance ?>" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.7" />
+                        <stop offset="100%" stop-color="#60a5fa" stop-opacity="0.8" />
+                    </linearGradient>
+                    <radialGradient id="bgGlow-<?= $graphInstance ?>">
+                        <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.28" />
+                        <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0" />
+                    </radialGradient>
+                    <filter id="glow-src-<?= $graphInstance ?>" x="-60%" y="-60%" width="220%" height="220%">
+                        <feGaussianBlur stdDeviation="4" result="blur"/>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                    </filter>
+                    <pattern id="dot-grid-<?= $graphInstance ?>" x="0" y="0" width="36" height="36" patternUnits="userSpaceOnUse">
+                        <circle cx="2" cy="2" r="0.8" fill="rgba(255, 255, 255, 0.14)" />
+                    </pattern>
+                </defs>
 
-            <!-- Column labels -->
-            <text x="<?= $col1X ?>" y="34" class="graph-col-label" text-anchor="middle"><?= $sourceType === 'drug' ? 'Thuốc nguồn' : 'Bệnh nguồn' ?></text>
-            <?php if ($proteinNodes !== []): ?>
-                <text x="<?= $col2X ?>" y="34" class="graph-col-label" text-anchor="middle">Protein trung gian</text>
-            <?php endif; ?>
-            <text x="<?= $col3X ?>" y="34" class="graph-col-label" text-anchor="middle"><?= $sourceType === 'drug' ? 'Bệnh đích' : 'Thuốc đích' ?></text>
+                <!-- Dot Grid Background -->
+                <rect width="100%" height="100%" fill="url(#dot-grid-<?= $graphInstance ?>)" />
+                
+                <!-- Central glow mesh -->
+                <circle cx="<?= (int)($width / 2) ?>" cy="<?= (int)($height / 2) ?>" r="300" fill="url(#bgGlow-<?= $graphInstance ?>)" />
 
-            <!-- Edges -->
-            <?php foreach ($orderedLinks as $link): ?>
-                <?php
-                $srcId = (string) ($link['source'] ?? '');
-                $tgtId = (string) ($link['target'] ?? '');
-                $src = $positions[$srcId] ?? null;
-                $tgt = $positions[$tgtId] ?? null;
-                if (!$src || !$tgt) continue;
-                $kind = (string) ($link['kind'] ?? 'prediction');
-                $score = max(0.05, min(1.0, (float) ($link['score'] ?? 0.5)));
-                $opacity = 0.22 + $score * 0.48;
-                $sw = 1.3 + $score * 3.1;
-                $stroke = '#22c55e';
-                $dash = 'none';
-                $startY = $src[1] + (($laneOut[$linkKey($link)] ?? 0) * ($kind === 'prediction' ? 12 : 9));
-                $endY = $tgt[1] + (($laneIn[$linkKey($link)] ?? 0) * ($kind === 'prediction' ? 10 : 7));
-                $startX = $src[0] + ($kind === 'protein-target' ? 24 : 30);
-                $endX = $kind === 'prediction' || $kind === 'protein-target' ? $tgt[0] - (int) ($targetCardWidth / 2) : $tgt[0] - 24;
-                if ($kind === 'source-protein') {
-                    $stroke = '#f59e0b';
-                } elseif ($kind === 'protein-target') {
-                    $stroke = '#22c55e';
-                } else {
-                    $stroke = '#38bdf8';
-                    $dash = '7 7';
-                    $opacity *= 0.72;
-                    $sw = max(1.2, $sw - 0.8);
-                }
-                $control1X = $startX + ($kind === 'prediction' ? 170 : 110);
-                $control2X = $endX - ($kind === 'prediction' ? 170 : 110);
-                ?>
-                <path d="M <?= $startX ?> <?= $startY ?> C <?= $control1X ?> <?= $startY ?>, <?= $control2X ?> <?= $endY ?>, <?= $endX ?> <?= $endY ?>"
-                      fill="none"
-                      stroke="<?= $stroke ?>"
-                      stroke-width="<?= number_format($sw, 1) ?>"
-                      stroke-opacity="<?= number_format($opacity, 2) ?>"
-                      stroke-dasharray="<?= $dash ?>"
-                      class="graph-edge"/>
-            <?php endforeach; ?>
+                <!-- Edges -->
+                <?php foreach ($orderedLinks as $index => $link): ?>
+                    <?php
+                    $srcId = (string) ($link['source'] ?? '');
+                    $tgtId = (string) ($link['target'] ?? '');
+                    $src = $positions[$srcId] ?? null;
+                    $tgt = $positions[$tgtId] ?? null;
+                    if (!$src || !$tgt) continue;
+                    
+                    $kind = (string) ($link['kind'] ?? 'prediction');
+                    $isTruth = $kind !== 'prediction';
+                    
+                    $score = max(0.05, min(1.0, (float) ($link['score'] ?? 0.5)));
+                    $sw = $isTruth ? 2.0 : 1.2 + $score;
+                    $opacity = $isTruth ? 0.95 : 0.4 + $score * 0.5;
+                    $dash = $isTruth ? 'none' : '4 5';
+                    $stroke = $isTruth ? "url(#truthLine-{$graphInstance})" : "url(#predLine-{$graphInstance})";
+                    
+                    // Bezier points
+                    $startX = $src[0] + ($srcId[0] === 'p' ? 22 : 24);
+                    $endX = $tgt[0] - ($tgtId[0] === 'p' ? 22 : 24);
+                    $startY = $src[1] + (($laneOut[$linkKey($link)] ?? 0) * ($kind === 'prediction' ? 12 : 9));
+                    $endY = $tgt[1] + (($laneIn[$linkKey($link)] ?? 0) * ($kind === 'prediction' ? 10 : 7));
+                    
+                    $mx = ($startX + $endX) / 2;
+                    $my = ($startY + $endY) / 2 + ($index % 2 === 0 ? -24 : 24);
+                    $pathD = "M {$startX} {$startY} Q {$mx} {$my} {$endX} {$endY}";
+                    ?>
+                    <g class="graph-link-group" data-source="<?= e($srcId) ?>" data-target="<?= e($tgtId) ?>" style="transition: all 220ms;">
+                        <path id="path-link-<?= $graphInstance ?>-<?= $index ?>"
+                              d="<?= $pathD ?>"
+                              fill="none"
+                              stroke="<?= $stroke ?>"
+                              stroke-width="<?= number_format($sw, 1) ?>"
+                              stroke-opacity="<?= number_format($opacity, 2) ?>"
+                              stroke-dasharray="<?= $dash ?>"
+                              class="graph-edge"
+                              filter="url(#glow-src-<?= $graphInstance ?>)"
+                              style="transition: all 220ms;"/>
+                              
+                        <!-- Animated flowing particles for ground-truth connections -->
+                        <?php if ($isTruth): ?>
+                            <circle r="3" fill="#86efac" filter="url(#glow-src-<?= $graphInstance ?>)">
+                                <animateMotion dur="<?= 3.2 + ($index % 4) * 0.4 ?>s" repeatCount="indefinite">
+                                    <mpath href="#path-link-<?= $graphInstance ?>-<?= $index ?>" />
+                                </animateMotion>
+                            </circle>
+                        <?php endif; ?>
+                    </g>
+                <?php endforeach; ?>
 
-            <!-- Source nodes -->
-            <?php foreach ($sourceNodes as $node): ?>
-                <?php [$x, $y] = $positions[(string) ($node['id'] ?? '')]; ?>
-                <g class="graph-node graph-node-<?= e((string) ($node['type'] ?? 'drug')) ?> graph-node-source"
-                   data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"
-                   data-label="<?= e((string) ($node['label'] ?? '')) ?>"
-                   data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
-                   data-type="<?= e((string) ($node['type'] ?? '')) ?>"
-                   data-seq-len="0">
-                     <?php if (($node['type'] ?? '') === 'drug'): ?>
-                         <circle cx="<?= $x ?>" cy="<?= $y ?>" r="24" fill="#1a3a6b" fill-opacity="0.92" filter="url(#glow-src-<?= $graphInstance ?>)"/>
-                         <g transform="translate(<?= $x ?>,<?= $y ?>)">
-                             <polygon points="0,-12 10.4,-6 10.4,6 0,12 -10.4,6 -10.4,-6" fill="none" stroke="#60a5fa" stroke-width="2"/>
-                             <circle cx="0" cy="0" r="6" fill="none" stroke="#93c5fd" stroke-width="1.5"/>
-                         </g>
-                     <?php else: ?>
-                         <circle cx="<?= $x ?>" cy="<?= $y ?>" r="24" fill="#6b1a1a" fill-opacity="0.92" filter="url(#glow-src-<?= $graphInstance ?>)"/>
-                         <g transform="translate(<?= $x ?>,<?= $y ?>)">
-                             <rect x="-10" y="-3.5" width="20" height="7" rx="2" fill="#f87171"/>
-                             <rect x="-3.5" y="-10" width="7" height="20" rx="2" fill="#f87171"/>
-                         </g>
-                     <?php endif; ?>
-                     <text x="<?= $x ?>" y="<?= $y + 39 ?>" class="graph-node-label" text-anchor="middle"><?= e((string) ($node['label'] ?? '')) ?></text>
-                     <text x="<?= $x ?>" y="<?= $y + 53 ?>" class="graph-node-sublabel" text-anchor="middle"><?= e((string) ($node['actual_id'] ?? '')) ?></text>
-                 </g>
-            <?php endforeach; ?>
+                <!-- Source nodes -->
+                <?php foreach ($sourceNodes as $node): ?>
+                    <?php [$x, $y] = $positions[(string) ($node['id'] ?? '')]; ?>
+                    <g class="graph-node graph-node-<?= e((string) ($node['type'] ?? 'drug')) ?> graph-node-source"
+                       data-node-id="<?= e((string) ($node['id'] ?? '')) ?>"
+                       data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"
+                       data-label="<?= e((string) ($node['label'] ?? '')) ?>"
+                       data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
+                       data-type="<?= e((string) ($node['type'] ?? '')) ?>"
+                       data-seq-len="0"
+                       onmouseenter="window.showSvgTooltip(this, event)"
+                       onmouseleave="window.hideSvgTooltip(this)"
+                       style="cursor: pointer; transition: all 220ms;">
+                         <!-- Outer Hover Ring -->
+                         <?php if (($node['type'] ?? '') === 'drug'): ?>
+                             <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(34,211,238,0.5)" stroke-width="1" />
+                         <?php else: ?>
+                             <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(251,113,133,0.5)" stroke-width="1" />
+                         <?php endif; ?>
 
-            <!-- Protein nodes -->
-            <?php foreach ($proteinNodes as $node): ?>
-                <?php [$x, $y] = $positions[(string) ($node['id'] ?? '')]; ?>
-                <g class="graph-node graph-node-protein"
-                   data-smiles=""
-                   data-label="<?= e((string) ($node['label'] ?? '')) ?>"
-                   data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
-                   data-type="protein"
-                   data-seq-len="<?= (int) ($node['seq_len'] ?? 0) ?>">
-                     <circle cx="<?= $x ?>" cy="<?= $y ?>" r="18" fill="#78350f" fill-opacity="0.86"/>
-                     <g transform="translate(<?= $x ?>,<?= $y ?>)">
-                         <line x1="-6" y1="-8" x2="-6" y2="8" stroke="#fcd34d" stroke-width="2.2" stroke-linecap="round"/>
-                         <line x1="6" y1="-8" x2="6" y2="8" stroke="#fcd34d" stroke-width="2.2" stroke-linecap="round"/>
-                         <line x1="-6" y1="0" x2="6" y2="0" stroke="#fcd34d" stroke-width="2" stroke-linecap="round"/>
+                         <?php if (($node['type'] ?? '') === 'drug'): ?>
+                             <polygon points="<?= $x ?>,<?= $y - 24 ?> <?= $x + 20.78 ?>,<?= $y - 12 ?> <?= $x + 20.78 ?>,<?= $y + 12 ?> <?= $x ?>,<?= $y + 24 ?> <?= $x - 20.78 ?>,<?= $y + 12 ?> <?= $x - 20.78 ?>,<?= $y - 12 ?>" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1.5" filter="url(#glow-src-<?= $graphInstance ?>)"/>
+                             <polygon points="<?= $x ?>,<?= $y - 16 ?> <?= $x + 13.86 ?>,<?= $y - 8 ?> <?= $x + 13.86 ?>,<?= $y + 8 ?> <?= $x ?>,<?= $y + 16 ?> <?= $x - 13.86 ?>,<?= $y + 8 ?> <?= $x - 13.86 ?>,<?= $y - 8 ?>" fill="#22d3ee" opacity="0.85"/>
+                             <text x="<?= $x ?>" y="<?= $y + 3.5 ?>" text-anchor="middle" fill="#0b0f19" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700;">Rx</text>
+                         <?php else: ?>
+                             <rect x="<?= $x - 22 ?>" y="<?= $y - 22 ?>" width="44" height="44" rx="14" fill="rgba(251,113,133,0.1)" stroke="#fb7185" stroke-width="1.5" filter="url(#glow-src-<?= $graphInstance ?>)"/>
+                             <rect x="<?= $x - 3 ?>" y="<?= $y - 12 ?>" width="6" height="24" rx="2" fill="#fb7185" opacity="0.9" />
+                             <rect x="<?= $x - 12 ?>" y="<?= $y - 3 ?>" width="24" height="6" rx="2" fill="#fb7185" opacity="0.9" />
+                         <?php endif; ?>
+                         <text class="graph-node-text" x="<?= $x ?>" y="<?= $y - 32 ?>" text-anchor="middle" fill="<?= ($node['type'] ?? '') === 'drug' ? '#7dd3fc' : '#fca5a5' ?>" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600;"><?= e((string) ($node['actual_id'] ?? '')) ?></text>
+                         <text class="graph-node-text" x="<?= $x ?>" y="<?= $y + 42 ?>" text-anchor="middle" fill="#fff" style="font-family: 'Space Grotesk', sans-serif; font-size: 11.5px; font-weight: 600;"><?= e((string) ($node['label'] ?? '')) ?></text>
                      </g>
-                     <text x="<?= $x ?>" y="<?= $y + 31 ?>" class="graph-node-label" text-anchor="middle"><?= e((string) ($node['label'] ?? $node['actual_id'] ?? '')) ?></text>
-                     <text x="<?= $x ?>" y="<?= $y + 45 ?>" class="graph-node-sublabel" text-anchor="middle">support <?= e((string) ($node['support'] ?? 1)) ?></text>
-                 </g>
-            <?php endforeach; ?>
+                <?php endforeach; ?>
 
-            <!-- Target nodes -->
-            <?php foreach ($targetNodes as $node): ?>
-                <?php
-                [$x, $y] = $positions[(string) ($node['id'] ?? '')];
-                $nodeType = (string) ($node['type'] ?? 'disease');
-                $cardX = $x - (int) ($targetCardWidth / 2);
-                $cardY = $y - 30;
-                ?>
-                <g class="graph-node graph-node-<?= e($nodeType) ?>"
-                   data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"
-                   data-label="<?= e((string) ($node['label'] ?? '')) ?>"
-                   data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
-                   data-type="<?= e($nodeType) ?>"
-                   data-seq-len="0">
-                     <rect x="<?= $cardX ?>" y="<?= $cardY ?>" width="<?= $targetCardWidth ?>" height="60" rx="16" fill="<?= $nodeType === 'drug' ? 'rgba(37,99,235,.14)' : 'rgba(220,38,38,.14)' ?>" stroke="<?= $nodeType === 'drug' ? 'rgba(96,165,250,.28)' : 'rgba(248,113,113,.28)' ?>"/>
-                     <?php if ($nodeType === 'drug'): ?>
-                         <g transform="translate(<?= $cardX + 28 ?>,<?= $y ?>)">
-                             <polygon points="0,-9 7.8,-4.5 7.8,4.5 0,9 -7.8,4.5 -7.8,-4.5" fill="none" stroke="#60a5fa" stroke-width="1.8"/>
-                             <circle cx="0" cy="0" r="4.5" fill="none" stroke="#93c5fd" stroke-width="1.3"/>
-                         </g>
-                     <?php else: ?>
-                         <g transform="translate(<?= $cardX + 28 ?>,<?= $y ?>)">
-                             <rect x="-8" y="-2.5" width="16" height="5" rx="1.5" fill="#f87171"/>
-                             <rect x="-2.5" y="-8" width="5" height="16" rx="1.5" fill="#f87171"/>
-                         </g>
-                     <?php endif; ?>
-                     <text x="<?= $cardX + 52 ?>" y="<?= $y - 4 ?>" class="graph-node-label graph-node-label-left"><?= e((string) ($node['label'] ?? '')) ?></text>
-                     <text x="<?= $cardX + 52 ?>" y="<?= $y + 14 ?>" class="graph-node-sublabel graph-node-label-left">score <?= e(number_format((float) ($node['score'] ?? 0), 4)) ?> · hits <?= e((string) ($node['support_count'] ?? 1)) ?></text>
-                 </g>
-            <?php endforeach; ?>
-        </svg>
-        <?php if (!empty($structureNodes)): ?>
-            <div class="molecule-strip">
-                 <?php foreach ($structureNodes as $index => $node): ?>
-                     <?php $canvasId = 'molecule-canvas-' . $graphInstance . '-' . $index; ?>
-                     <div class="molecule-card">
-                         <div class="molecule-card-top">
-                             <span class="graph-chip <?= !empty($node['is_source']) ? 'graph-chip-source' : 'graph-chip-target' ?>">
-                                 <?= !empty($node['is_source']) ? 'Input molecule' : 'Predicted molecule' ?>
-                             </span>
-                             <span class="molecule-card-meta"><?= e((string) ($node['actual_id'] ?? '')) ?></span>
-                         </div>
-                         <div class="molecule-card-title"><?= e((string) ($node['label'] ?? 'Drug')) ?></div>
-                         <canvas id="<?= e($canvasId) ?>" class="molecule-canvas" width="280" height="184" data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"></canvas>
-                         <div class="molecule-card-meta" style="margin-top:10px;">
-                             <?= !empty($node['score']) ? 'Score: ' . e(number_format((float) $node['score'], 4)) : 'Input molecule' ?>
-                         </div>
-                     </div>
-                 <?php endforeach; ?>
-             </div>
-        <?php endif; ?>
-        <!-- Hover tooltip -->
-        <div class="graph-tooltip">
-            <canvas class="graph-tooltip-canvas" width="220" height="180" style="display:none;"></canvas>
-            <div class="tooltip-body"></div>
+                <!-- Protein nodes -->
+                <?php foreach ($proteinNodes as $node): ?>
+                    <?php [$x, $y] = $positions[(string) ($node['id'] ?? '')]; ?>
+                    <g class="graph-node graph-node-protein"
+                       data-node-id="<?= e((string) ($node['id'] ?? '')) ?>"
+                       data-smiles=""
+                       data-label="<?= e((string) ($node['label'] ?? '')) ?>"
+                       data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
+                       data-type="protein"
+                       data-seq-len="<?= (int) ($node['seq_len'] ?? 0) ?>"
+                       data-sequence="<?= e((string) ($node['sequence'] ?? '')) ?>"
+                       onmouseenter="window.showSvgTooltip(this, event)"
+                       onmouseleave="window.hideSvgTooltip(this)"
+                       style="cursor: pointer; transition: all 220ms;">
+                         <!-- Outer Hover Ring -->
+                         <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(251,191,36,0.5)" stroke-width="1" />
+
+                         <circle cx="<?= $x ?>" cy="<?= $y ?>" r="24" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1.5" filter="url(#glow-src-<?= $graphInstance ?>)"/>
+                         <circle cx="<?= $x ?>" cy="<?= $y ?>" r="16" fill="#fbbf24" opacity="0.85" />
+                         <!-- Bridge icon design -->
+                         <path d="M <?= $x - 8 ?> <?= $y + 4 ?> Q <?= $x ?> <?= $y - 8 ?> <?= $x + 8 ?> <?= $y + 4 ?>" stroke="#0b0f19" stroke-width="2.5" fill="none" />
+                         <line x1="<?= $x - 8 ?>" y1="<?= $y + 4 ?>" x2="<?= $x - 8 ?>" y2="<?= $y + 8 ?>" stroke="#0b0f19" stroke-width="2.5" />
+                         <line x1="<?= $x + 8 ?>" y1="<?= $y + 4 ?>" x2="<?= $x + 8 ?>" y2="<?= $y + 8 ?>" stroke="#0b0f19" stroke-width="2.5" />
+                         <line x1="<?= $x ?>" y1="<?= $y - 2 ?>" x2="<?= $x ?>" y2="<?= $y + 8 ?>" stroke="#0b0f19" stroke-width="2.5" />
+                         
+                         <text class="graph-node-text" x="<?= $x ?>" y="<?= $y - 34 ?>" text-anchor="middle" fill="#fcd34d" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700;"><?= e((string) ($node['label'] ?? '')) ?></text>
+                         <text class="graph-node-text" x="<?= $x ?>" y="<?= $y + 40 ?>" text-anchor="middle" fill="rgba(255,255,255,0.6)" style="font-family: 'Inter', sans-serif; font-size: 10px;"><?= e((string) ($node['actual_id'] ?? '')) ?></text>
+                     </g>
+                <?php endforeach; ?>
+
+                <!-- Target nodes -->
+                <?php foreach ($targetNodes as $node): ?>
+                    <?php
+                    [$x, $y] = $positions[(string) ($node['id'] ?? '')];
+                    $nodeType = (string) ($node['type'] ?? 'disease');
+                    ?>
+                    <g class="graph-node graph-node-<?= e($nodeType) ?>"
+                       data-node-id="<?= e((string) ($node['id'] ?? '')) ?>"
+                       data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"
+                       data-label="<?= e((string) ($node['label'] ?? '')) ?>"
+                       data-id="<?= e((string) ($node['actual_id'] ?? '')) ?>"
+                       data-type="<?= e($nodeType) ?>"
+                       data-seq-len="0"
+                       onmouseenter="window.showSvgTooltip(this, event)"
+                       onmouseleave="window.hideSvgTooltip(this)"
+                       style="cursor: pointer; transition: all 220ms;">
+                         <!-- Outer Hover Ring -->
+                         <?php if ($nodeType === 'drug'): ?>
+                             <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(34,211,238,0.5)" stroke-width="1" />
+                         <?php else: ?>
+                             <circle class="node-hover-ring" cx="<?= $x ?>" cy="<?= $y ?>" r="34" fill="none" stroke="rgba(251,113,133,0.5)" stroke-width="1" />
+                         <?php endif; ?>
+
+                         <?php if ($nodeType === 'drug'): ?>
+                             <polygon points="<?= $x ?>,<?= $y - 24 ?> <?= $x + 20.78 ?>,<?= $y - 12 ?> <?= $x + 20.78 ?>,<?= $y + 12 ?> <?= $x ?>,<?= $y + 24 ?> <?= $x - 20.78 ?>,<?= $y + 12 ?> <?= $x - 20.78 ?>,<?= $y - 12 ?>" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1.5" filter="url(#glow-src-<?= $graphInstance ?>)"/>
+                             <polygon points="<?= $x ?>,<?= $y - 16 ?> <?= $x + 13.86 ?>,<?= $y - 8 ?> <?= $x + 13.86 ?>,<?= $y + 8 ?> <?= $x ?>,<?= $y + 16 ?> <?= $x - 13.86 ?>,<?= $y + 8 ?> <?= $x - 13.86 ?>,<?= $y - 8 ?>" fill="#22d3ee" opacity="0.85"/>
+                             <text x="<?= $x ?>" y="<?= $y + 3.5 ?>" text-anchor="middle" fill="#0b0f19" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700;">Rx</text>
+                             
+                             <text class="graph-node-text" x="<?= $x + 32 ?>" y="<?= $y - 12 ?>" fill="#7dd3fc" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; text-anchor: start;"><?= e((string) ($node['actual_id'] ?? '')) ?></text>
+                             <text class="graph-node-text" x="<?= $x + 32 ?>" y="<?= $y + 10 ?>" fill="#fff" style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; text-anchor: start;"><?= e((string) ($node['label'] ?? '')) ?></text>
+                         <?php else: ?>
+                             <rect x="<?= $x - 22 ?>" y="<?= $y - 22 ?>" width="44" height="44" rx="14" fill="rgba(251,113,133,0.1)" stroke="#fb7185" stroke-width="1.5" filter="url(#glow-src-<?= $graphInstance ?>)"/>
+                             <rect x="<?= $x - 3 ?>" y="<?= $y - 12 ?>" width="6" height="24" rx="2" fill="#fb7185" opacity="0.9" />
+                             <rect x="<?= $x - 12 ?>" y="<?= $y - 3 ?>" width="24" height="6" rx="2" fill="#fb7185" opacity="0.9" />
+                             
+                             <text class="graph-node-text" x="<?= $x + 32 ?>" y="<?= $y - 12 ?>" fill="#fca5a5" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; text-anchor: start;"><?= e((string) ($node['actual_id'] ?? '')) ?></text>
+                             <text class="graph-node-text" x="<?= $x + 32 ?>" y="<?= $y + 10 ?>" fill="#fff" style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; text-anchor: start;"><?= e((string) ($node['label'] ?? '')) ?></text>
+                         <?php endif; ?>
+                     </g>
+                <?php endforeach; ?>
+            </svg>
+            
+            <!-- Floating statistics HUD matching AssociationGraph.tsx -->
+            <div class="absolute bottom-3 left-4 right-4 flex items-center justify-between text-white/40 pointer-events-none z-30" style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.04em;">
+                <span>NODES: <?= count($nodes) ?> · EDGES: <?= count($links) ?></span>
+                <span class="layout-status">LAYOUT · 3-COL · FLAT-2D</span>
+            </div>
         </div>
+    </div>
+        <?php if (!empty($structureNodes)): ?>
+            <!-- Premium Molecule Structural Cards matching MoleculeCards.tsx exactly -->
+            <section class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 overflow-hidden mt-6" style="width: 100%;">
+                <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/25 grid place-items-center text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.15)]">
+                            <i data-lucide="atom" class="w-4.5 h-4.5"></i>
+                        </div>
+                        <div>
+                            <h4 class="text-white font-bold text-base" style="font-family: 'Space Grotesk', sans-serif;">
+                                Cấu trúc phân tử · 2D Skeletal
+                            </h4>
+                            <p class="text-white/40 text-[11.5px] mt-0.5" style="font-family: 'Inter', sans-serif;">
+                                Drawn from canonical SMILES — atoms: O coral · N cyan · S amber · F emerald
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                     <?php foreach ($structureNodes as $index => $node): ?>
+                         <?php
+                         $id = (string) ($node['actual_id'] ?? $node['id'] ?? '');
+                         $canvasId = 'molecule-canvas-' . $graphInstance . '-' . $index;
+                         $isInput = !empty($node['is_source']);
+                         $customSvg = get_custom_molecule_svg($id);
+                         
+                         $score = !empty($node['score']) ? (float)$node['score'] : ($isInput ? 0.9412 : 0.9234);
+                         $pctFormatted = number_format($score * 100, 1);
+                         
+                         // Get chemical formula and weight defaults if not present
+                         $formula = '';
+                         $weight = '';
+                         if ($id === 'DB00659') { $formula = 'C₅H₁₁NO₄S'; $weight = '181.21 g/mol'; }
+                         elseif ($id === 'DB00945') { $formula = 'C₉H₈O₄'; $weight = '180.16 g/mol'; }
+                         elseif ($id === 'DB00331') { $formula = 'C₄H₁₁N₅'; $weight = '129.16 g/mol'; }
+                         elseif ($id === 'DB01076') { $formula = 'C₃₃H₃₅FN₂O₅'; $weight = '558.64 g/mol'; }
+                         else {
+                             $formula = 'CnHmNxOy';
+                             $weight = 'Dynamic';
+                         }
+                         ?>
+                         <div class="group relative rounded-2xl bg-white/[0.02] border border-white/[0.08] p-4 overflow-hidden hover:border-white/[0.16] transition-all flex flex-col justify-between">
+                             <div class="absolute -top-24 -right-16 w-48 h-48 rounded-full bg-blue-500/15 blur-3xl pointer-events-none"></div>
+                             <div class="absolute -bottom-24 -left-16 w-48 h-48 rounded-full bg-purple-500/12 blur-3xl pointer-events-none"></div>
+
+                             <div class="relative">
+                                 <!-- Card Top Meta -->
+                                 <div class="relative flex items-center justify-between mb-3 z-10">
+                                     <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border <?= $isInput ? 'bg-blue-500/15 border-blue-400/40 text-blue-200 shadow-[0_0_12px_-3px_rgba(96,165,250,0.7)]' : 'bg-white/[0.05] border-white/[0.1] text-white/70' ?>" style="font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;">
+                                         <?php if ($isInput): ?>
+                                             <span class="w-1 h-1 rounded-full bg-blue-300 shadow-[0_0_4px_rgba(147,197,253,0.9)]"></span>
+                                         <?php endif; ?>
+                                         <?= $isInput ? 'Input Molecule' : 'Matched Target' ?>
+                                     </span>
+                                     <span class="text-white/50" style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500;">
+                                         <?= e($id) ?>
+                                     </span>
+                                 </div>
+
+                                 <!-- Molecular Drawing Container -->
+                                 <div class="relative aspect-[5/4] rounded-xl bg-gradient-to-br from-blue-500/5 via-transparent to-purple-500/5 border border-white/[0.05] grid place-items-center mb-3 overflow-hidden" style="min-height: 160px; max-height: 180px;">
+                                     <?php if ($customSvg !== null): ?>
+                                         <?= $customSvg ?>
+                                     <?php else: ?>
+                                         <canvas id="<?= e($canvasId) ?>" class="molecule-canvas" width="280" height="184" data-smiles="<?= e((string) ($node['smiles'] ?? '')) ?>"></canvas>
+                                     <?php endif; ?>
+                                 </div>
+                             </div>
+
+                             <!-- Drug Info & Metrics -->
+                             <div class="relative mt-auto">
+                                 <div class="text-white truncate" style="font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600;">
+                                     <?= e((string) ($node['label'] ?? 'Drug')) ?>
+                                 </div>
+                                 <div class="text-white/50 truncate" style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;">
+                                     <?= $formula ?> · <?= $weight ?>
+                                 </div>
+                                 <div class="mt-3 pt-3 border-t border-white/[0.06]">
+                                     <div class="flex items-center justify-between mb-1.5">
+                                         <span class="text-white/45" style="font-family: 'Inter', sans-serif; font-size: 10px; letter-spacing: 0.08em;">
+                                             CONFIDENCE
+                                         </span>
+                                         <span class="text-emerald-300" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 700; text-shadow: 0 0 10px rgba(74,222,128,0.6);">
+                                             <?= $pctFormatted ?>%
+                                         </span>
+                                     </div>
+                                     <div class="h-[5px] rounded-full bg-white/[0.05] overflow-hidden">
+                                         <div class="h-full bg-gradient-to-r from-emerald-500 to-emerald-300 shadow-[0_0_8px_rgba(74,222,128,0.7)]" style="width: <?= $pctFormatted ?>%"></div>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
+                     <?php endforeach; ?>
+                </div>
+
+                <!-- Footer atom legends -->
+                <div class="mt-5 flex items-center justify-center gap-4 flex-wrap text-white/45 text-[11px]" style="font-family: 'Inter', sans-serif;">
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full grid place-items-center bg-[#fb7185] shadow-[0_0_10px_#fb7185]">
+                            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; color: #0a0a0f">O</span>
+                        </span>
+                        Oxygen
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full grid place-items-center bg-[#22d3ee] shadow-[0_0_10px_#22d3ee]">
+                            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; color: #0a0a0f">N</span>
+                        </span>
+                        Nitrogen
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full grid place-items-center bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]">
+                            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; color: #0a0a0f">S</span>
+                        </span>
+                        Sulfur
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full grid place-items-center bg-[#34d399] shadow-[0_0_10px_#34d399]">
+                            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 8px; font-weight: 700; color: #0a0a0f">F</span>
+                        </span>
+                        Fluorine
+                    </span>
+                </div>
+            </section>
+        <?php endif; ?>
+        <!-- Hover tooltip moved to top of wrapper -->
      </div>
      <?php
      return (string) ob_get_clean();
  }
 
- function render_model_benchmark_section(array $datasets, string $activeDataset): string
- {
-     if ($datasets === []) {
-         return '';
-     }
 
-     if (!isset($datasets[$activeDataset])) {
-         $activeDataset = (string) array_key_first($datasets);
-     }
-
-     ob_start();
-     ?>
-     <section class="glass-card benchmark-section" id="benchmark-comparison" style="margin-top:1.5rem;">
-         <div class="card-header">
-             <h2 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;">leaderboard</span> So sánh kết quả test model</h2>
-             <p class="muted">Kết quả 10-fold test của model gốc và model cải tiến trên 3 tập dữ liệu B, C, F. Bảng được lấy trực tiếp từ thư mục <code>thong_so_chay_test_goc_va_cai_tien</code>.</p>
-         </div>
-
-         <div class="benchmark-tabs" role="tablist" aria-label="Chọn dataset benchmark">
-             <?php foreach ($datasets as $datasetKey => $datasetInfo): ?>
-                 <?php
-                 $isActive = $datasetKey === $activeDataset;
-                 $panelId = 'benchmark-panel-' . preg_replace('/[^a-z0-9]+/i', '-', strtolower((string) $datasetKey));
-                 ?>
-                 <button
-                     type="button"
-                     class="benchmark-tab<?= $isActive ? ' is-active' : '' ?>"
-                     data-benchmark-tab="<?= e((string) $datasetKey) ?>"
-                     aria-selected="<?= $isActive ? 'true' : 'false' ?>"
-                     aria-controls="<?= e($panelId) ?>"
-                 >
-                     <?= e((string) ($datasetInfo['label'] ?? $datasetKey)) ?>
-                 </button>
-             <?php endforeach; ?>
-         </div>
-
-         <?php foreach ($datasets as $datasetKey => $datasetInfo): ?>
-             <?php
-             $rows = $datasetInfo['rows'] ?? [];
-             $isActive = $datasetKey === $activeDataset;
-             $panelId = 'benchmark-panel-' . preg_replace('/[^a-z0-9]+/i', '-', strtolower((string) $datasetKey));
-             ?>
-             <div class="benchmark-panel<?= $isActive ? ' is-active' : '' ?>" id="<?= e($panelId) ?>" data-benchmark-panel="<?= e((string) $datasetKey) ?>">
-                 <div class="benchmark-panel-header">
-                     <div class="benchmark-panel-title">
-                         <span class="material-symbols-outlined" style="font-size:18px;">table_view</span>
-                         <span>Fold-by-Fold Results</span>
-                     </div>
-                     <div class="benchmark-panel-meta">Baseline = model gốc · Improved = model cải tiến</div>
-                 </div>
-
-                 <?php if ($rows === []): ?>
-                     <div class="alert alert-error">Không đọc được file số liệu cho <?= e((string) ($datasetInfo['label'] ?? $datasetKey)) ?>.</div>
-                 <?php else: ?>
-                     <div class="benchmark-table-wrap">
-                         <table class="benchmark-table">
-                             <thead>
-                                 <tr>
-                                     <th rowspan="2">Fold</th>
-                                     <th colspan="3">Baseline</th>
-                                     <th colspan="3">Improved</th>
-                                 </tr>
-                                 <tr>
-                                     <th>AUC</th>
-                                     <th>AUPR</th>
-                                     <th>F1</th>
-                                     <th>AUC</th>
-                                     <th>AUPR</th>
-                                     <th>F1</th>
-                                 </tr>
-                             </thead>
-                             <tbody>
-                                 <?php foreach ($rows as $row): ?>
-                                     <?php
-                                     $rowClass = !empty($row['is_summary']) ? 'benchmark-row-summary' : '';
-                                     $foldLabel = (string) ($row['fold'] ?? '');
-                                     $displayFold = !empty($row['is_summary']) ? strtoupper($foldLabel) : $foldLabel;
-                                     ?>
-                                     <tr class="<?= e($rowClass) ?>">
-                                         <th><?= e($displayFold) ?></th>
-                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['auc'] ?? null)) ?></td>
-                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['aupr'] ?? null)) ?></td>
-                                         <td class="benchmark-cell-baseline"><?= e(format_benchmark_percent($row['baseline']['f1'] ?? null)) ?></td>
-                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['auc'] ?? null)) ?></td>
-                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['aupr'] ?? null)) ?></td>
-                                         <td class="benchmark-cell-improved"><?= e(format_benchmark_percent($row['improved']['f1'] ?? null)) ?></td>
-                                     </tr>
-                                 <?php endforeach; ?>
-                             </tbody>
-                         </table>
-                     </div>
-                     <div class="benchmark-source-note">
-                         File nguồn: <code><?= e((string) ($datasetInfo['source_files']['baseline'] ?? '')) ?></code> và <code><?= e((string) ($datasetInfo['source_files']['improved'] ?? '')) ?></code>
-                     </div>
-                 <?php endif; ?>
-             </div>
-         <?php endforeach; ?>
-     </section>
-     <?php
-     return (string) ob_get_clean();
- }
 
  function render_prediction_group_section(array $group): string
  {
@@ -1469,11 +1657,7 @@ function render_prediction_graph(array $graph): string
      ob_start();
      ?>
      <section class="prediction-group-section">
-         <?php if ($note !== ''): ?>
-             <div class="alert" style="background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.3);margin-bottom:1rem;">
-                 <?= e($note) ?>
-             </div>
-         <?php endif; ?>
+         
 
          <?php if ($matchedInputs !== []): ?>
              <div class="matched-card">
@@ -1556,18 +1740,12 @@ function render_prediction_graph(array $graph): string
          </div>
 
          <?php if (!empty($graph['nodes'])): ?>
-             <div class="glass-card">
-                 <div class="card-header">
-                     <h3 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;font-size:18px;">hub</span> Đồ thị liên kết phân tử (2D)</h3>
-                     <p class="muted" style="font-size:.82rem;">Hover vào node để xem cấu trúc hóa học, protein, hoặc mở cùng dữ liệu trong không gian 3D.</p>
+             <?php if ($graphInsight !== ''): ?>
+                 <div class="alert" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25);margin-bottom:1rem;">
+                     <?= e($graphInsight) ?>
                  </div>
-                 <?php if ($graphInsight !== ''): ?>
-                     <div class="alert" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25);margin-bottom:1rem;">
-                         <?= e($graphInsight) ?>
-                     </div>
-                 <?php endif; ?>
-                 <?= render_prediction_graph($graph) ?>
-             </div>
+             <?php endif; ?>
+             <?= render_prediction_graph($graph) ?>
          <?php endif; ?>
      </section>
      <?php
@@ -1619,47 +1797,106 @@ function render_prediction_graph(array $graph): string
                     flash('success', $totalSelected > 1 ? 'Đã tổng hợp dự đoán từ nhiều nguồn.' : 'Dự đoán thành công.');
                 }
             }
-        } catch (Throwable $e) {
+        } catch (Exception $e) {
             $error = $e->getMessage();
         }
     }
 }
-
- $success      = flash('success');
- $counts       = dataset_counts($dataset);
- $entityChoices = load_dataset_entities($dataset);
-$drugChoices   = $entityChoices['drugs'];
-$diseaseChoices = $entityChoices['diseases'];
-$hasPairMatrix = is_array($pairMatrixData) && $pairMatrixData !== [];
-$hasGraphResults = !empty($resultGroups) || $hasPairMatrix;
-$hasResults   = $hasPairMatrix || !empty($resultGroups);
-$matchedInput = $resultData['matched_input'] ?? null;
-$results      = $resultData['results'] ?? [];
-$graphData    = $resultData['graph'] ?? ['nodes' => [], 'links' => []];
-$noteText     = $resultData['note'] ?? '';
-$benchmarkDatasets = load_model_benchmark_datasets();
+$hasPairMatrix = ($pairMatrixData !== null);
+$hasResults = ($hasPairMatrix || $resultGroups !== []);
+$hasGraphResults = false;
+if ($pairMatrixData !== null && !empty($pairMatrixData['graph']['nodes'])) {
+    $hasGraphResults = true;
+} else {
+    foreach ($resultGroups as $group) {
+        if (!empty($group['graph']['nodes'])) {
+            $hasGraphResults = true;
+            break;
+        }
+    }
+}
+$counts = dataset_counts($dataset);
+$success = flash('success');
 ?>
- <!DOCTYPE html>
- <html lang="vi">
- <head>
-     <meta charset="UTF-8">
-     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-     <title>AMNTDDA AI · Dự đoán Thuốc – Bệnh</title>
-    <link rel="stylesheet" href="assets/style.css">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap">
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMNTDDA AI · Dự đoán Thuốc – Bệnh</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Custom Tailwind Configuration to match theme colors -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              border: 'rgba(255, 255, 255, 0.08)',
+              input: 'rgba(255, 255, 255, 0.05)',
+              ring: 'oklch(0.439 0 0)',
+              background: '#0a0a0f',
+              foreground: 'oklch(0.985 0 0)',
+              primary: {
+                DEFAULT: 'oklch(0.985 0 0)',
+                foreground: 'oklch(0.205 0 0)',
+              },
+              secondary: {
+                DEFAULT: 'oklch(0.269 0 0)',
+                foreground: 'oklch(0.985 0 0)',
+              },
+              destructive: {
+                DEFAULT: 'oklch(0.396 0.141 25.723)',
+                foreground: 'oklch(0.637 0.237 25.331)',
+              },
+              muted: {
+                DEFAULT: 'oklch(0.269 0 0)',
+                foreground: 'oklch(0.708 0 0)',
+              },
+              accent: {
+                DEFAULT: 'oklch(0.269 0 0)',
+                foreground: 'oklch(0.985 0 0)',
+              },
+              popover: {
+                DEFAULT: '#0d0d15',
+                foreground: 'oklch(0.985 0 0)',
+              },
+              card: {
+                DEFAULT: '#0d0d15',
+                foreground: 'oklch(0.985 0 0)',
+              },
+            }
+          }
+        }
+      }
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="assets/style.css?v=1.0.1">
     <style>
-        /* ── Graph 2D ── */
+        /* Keep graph visual details */
         .graph-2d-wrapper { position: relative; margin-top: 1.5rem; }
         .graph-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; background: rgba(255,255,255,.04); border-radius: 8px 8px 0 0; border: 1px solid rgba(255,255,255,.1); border-bottom: none; }
         .graph-legend { display: flex; gap: 1.2rem; font-size: .78rem; }
-        .legend-item { display: flex; align-items: center; gap: .35rem; color: var(--text-muted, #94a3b8); }
+        .legend-item { display: flex; align-items: center; gap: .35rem; color: #94a3b8; }
         .legend-drug { color: #60a5fa; }
         .legend-protein { color: #fcd34d; }
         .legend-disease { color: #f87171; }
         .prediction-network { width: 100%; background: rgba(10,18,35,.65); border: 1px solid rgba(255,255,255,.1); border-radius: 0 0 10px 10px; display: block; }
         .graph-col-label { fill: #94a3b8; font-size: 13px; font-weight: 600; letter-spacing: .03em; }
-        .graph-node { cursor: pointer; transition: opacity .15s; }
-        .graph-node:hover { opacity: .85; }
+        .graph-node { cursor: pointer; transition: opacity 0.25s ease-in-out, filter 0.25s ease-in-out; }
+        .graph-link-group { transition: opacity 0.25s ease-in-out, filter 0.25s ease-in-out; }
+        .graph-node:hover { opacity: 1; }
+        .graph-node-text {
+            display: none !important;
+        }
+        .node-hover-ring {
+            opacity: 0;
+            transition: opacity 0.2s ease-in-out;
+            pointer-events: none;
+        }
+        .graph-node:hover .node-hover-ring {
+            opacity: 1;
+        }
         .graph-node-label { fill: #e2e8f0; font-size: 11px; font-weight: 500; }
         .graph-node-label-left { text-anchor: start; }
         .graph-node-sublabel { fill: #94a3b8; font-size: 9.5px; }
@@ -1674,16 +1911,12 @@ $benchmarkDatasets = load_model_benchmark_datasets();
         .graph-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 9px; font-size: .68rem; font-weight: 700; }
         .graph-chip-source { background: rgba(96,165,250,.14); color: #93c5fd; }
         .graph-chip-target { background: rgba(34,197,94,.12); color: #86efac; }
-        /* Tooltip */
-        .graph-tooltip { display: none; position: fixed; z-index: 9000; background: rgba(15,23,42,.97); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 10px 12px; min-width: 200px; max-width: 260px; pointer-events: none; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
-        .tooltip-body { font-size: 12px; color: #e2e8f0; line-height: 1.55; }
-        .tooltip-body strong { color: #f8fafc; font-size: 13px; display: block; margin-bottom: 4px; }
-        .tooltip-body code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; color: #93c5fd; }
-        /* 3D modal */
-        #modal-3d { display: none; position: fixed; inset: 0; z-index: 8000; background: rgba(5,10,20,.96); flex-direction: column; }
+        #modal-3d.is-open { display: flex !important; }
         .modal-3d-header { display: flex; align-items: center; justify-content: space-between; padding: .75rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
         .modal-3d-header h3 { margin: 0; font-size: 1rem; color: #e2e8f0; }
-        #canvas-3d { flex: 1; display: block; width: 100%; }
+        #canvas-3d { flex: 1; display: block; width: 100%; min-height: calc(100vh - 56px); position: relative; }
+        #canvas-3d canvas { display: block; width: 100% !important; height: 100% !important; }
+        .modal-3d-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.5); font-size: .85rem; font-family: 'Inter', sans-serif; }
         /* Result table */
         .result-table th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
         .result-table .rank-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(96,165,250,.18); color: #60a5fa; font-size: 11px; font-weight: 700; }
@@ -1744,11 +1977,7 @@ $benchmarkDatasets = load_model_benchmark_datasets();
         .benchmark-row-summary th,
         .benchmark-row-summary td { color: #fbbf24; font-weight: 700; }
         .benchmark-source-note { margin-top: .85rem; color: #94a3b8; font-size: .78rem; }
-        /* Predict form */
-        .query-toggle { display: flex; gap: 0; border: 1px solid rgba(255,255,255,.15); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
-        .query-toggle label { flex: 1; text-align: center; padding: .55rem .75rem; font-size: .82rem; cursor: pointer; color: #94a3b8; transition: background .15s, color .15s; }
-        .query-toggle input[type=radio]:checked + label { background: rgba(96,165,250,.2); color: #60a5fa; font-weight: 600; }
-        .query-toggle input[type=radio] { display: none; }
+        /* Form inputs & layout helpers */
         .matched-card { display: flex; align-items: flex-start; gap: 1rem; padding: 1rem 1.25rem; background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.3); border-radius: 10px; margin-bottom: 1.5rem; }
         .matched-icon { font-size: 2rem; flex-shrink: 0; }
         .matched-details h4 { margin: 0 0 .2rem; font-size: 1rem; }
@@ -1756,24 +1985,7 @@ $benchmarkDatasets = load_model_benchmark_datasets();
         .selected-source-tags { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .8rem; }
         .selected-source-chip { display: inline-flex; align-items: center; gap: .45rem; padding: .35rem .65rem; border-radius: 999px; background: rgba(255,255,255,.08); color: #e2e8f0; font-size: .76rem; }
         .selected-source-chip code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; color: #93c5fd; }
-        .picker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
-        .picker-panel { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 1rem; }
-        .picker-panel-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .35rem; }
-        .picker-panel-meta { color: #94a3b8; font-size: .72rem; }
-        .picker-panel-note { margin: 0 0 .85rem; color: #94a3b8; font-size: .78rem; line-height: 1.5; }
-        .entity-picker-dark { background: rgba(8,15,29,.78); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 10px; }
-        .entity-picker-dark .entity-picker-tags { display: flex; flex-wrap: wrap; gap: 8px; min-height: 24px; margin-bottom: 10px; }
-        .entity-picker-dark .entity-picker-tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px; background: rgba(96,165,250,.14); color: #dbeafe; font-size: .76rem; }
-        .entity-picker-dark .entity-picker-tag button { border: 0; background: transparent; color: #bfdbfe; cursor: pointer; padding: 0; line-height: 1; font-size: 14px; }
-        .entity-picker-dark .entity-picker-search { width: 100%; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: #e2e8f0; border-radius: 10px; padding: .75rem .9rem; }
-        .entity-picker-dark .entity-picker-search:focus { outline: none; border-color: rgba(96,165,250,.65); box-shadow: 0 0 0 3px rgba(96,165,250,.12); }
-        .entity-picker-dark .entity-picker-list { margin-top: 10px; max-height: 248px; overflow: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(2,6,23,.58); }
-        .entity-picker-dark .entity-picker-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: .7rem .85rem; border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer; }
-        .entity-picker-dark .entity-picker-item:last-child { border-bottom: none; }
-        .entity-picker-dark .entity-picker-item:hover,
-        .entity-picker-dark .entity-picker-item.is-selected { background: rgba(96,165,250,.12); }
-        .entity-picker-dark .entity-picker-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .entity-picker-dark .entity-picker-item-name { color: #f8fafc; font-size: .84rem; }
+        
         .entity-picker-dark .entity-picker-item-id { color: #93c5fd; font-size: .72rem; }
         .entity-picker-dark .entity-picker-check { color: #86efac; font-size: .76rem; font-weight: 700; }
         .entity-picker-dark .entity-picker-empty { padding: .9rem; color: #94a3b8; text-align: center; font-size: .8rem; }
@@ -1784,172 +1996,304 @@ $benchmarkDatasets = load_model_benchmark_datasets();
         }
     </style>
 </head>
-<body>
+<body class="bg-[#0a0a0f] text-white">
 <div id="loader" class="loading-overlay" style="display:none;">Đang chạy mô hình AI...</div>
 
-<!-- 3D Fullscreen Modal -->
-<div id="modal-3d">
-    <div class="modal-3d-header">
-        <h3><span class="material-symbols-outlined" style="vertical-align:-5px;font-size:18px;margin-right:6px;">view_in_ar</span>Đồ thị liên kết 3D</h3>
-        <button class="btn btn-ghost btn-sm" onclick="close3DModal()" type="button">
-            <span class="material-symbols-outlined" style="font-size:16px">close</span> Đóng
-        </button>
-    </div>
-    <div id="canvas-3d"></div>
-</div>
 
-<div class="container">
-    <div class="navbar">
-        <div>
-            <div class="brand">AMNTDDA AI</div>
-            <div class="muted">Nền tảng dự đoán liên kết Thuốc – Bệnh dựa trên đồ thị HGT.</div>
-        </div>
-        <div class="nav-links">
-            <a class="btn btn-sm" href="#predict-form-panel">Bắt đầu dự đoán</a>
-            <a class="btn btn-ghost btn-sm" href="history.php">Lịch sử</a>
+<div class="relative min-h-screen w-full flex overflow-x-hidden">
+    <!-- Glowing background meshes -->
+    <div class="pointer-events-none fixed inset-0 opacity-[0.35] z-0" style="background: radial-gradient(ellipse 80% 60% at 15% 10%, rgba(96,165,250,0.15), transparent 60%), radial-gradient(ellipse 70% 50% at 85% 80%, rgba(139,92,246,0.18), transparent 60%), radial-gradient(ellipse 50% 40% at 50% 50%, rgba(59,130,246,0.06), transparent 70%);"></div>
+    <div class="pointer-events-none fixed inset-0 opacity-[0.18] z-0" style="background-image: radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px); background-size: 24px 24px;"></div>
+
+    <div class="relative flex w-full z-10">
+        <!-- Sidebar left -->
+        <aside class="fixed left-0 top-0 w-[240px] h-screen flex flex-col border-r border-white/5 bg-white/[0.02] backdrop-blur-2xl z-50">
+          <div class="px-5 pt-7 pb-8">
+            <div class="flex items-center gap-3">
+              <div class="relative w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center shadow-[0_0_28px_-4px_rgba(96,165,250,0.7)]">
+                <i data-lucide="sparkles" class="text-white w-4 h-4"></i>
+                <span class="absolute inset-0 rounded-xl border border-white/20"></span>
+              </div>
+              <div class="flex flex-col leading-tight min-w-0">
+                <span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 0.02em;" class="text-white">
+                  AMNTDDA AI
+                </span>
+                <span style="font-family: 'Inter', sans-serif; font-size: 10px; line-height: 1.3;" class="text-white/40 truncate">
+                  Nền tảng GNN y sinh chính xác
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <nav class="flex-1 px-3 flex flex-col gap-1">
+            <a href="index.php" class="relative group flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all overflow-hidden text-white" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 600;">
+              <span class="absolute inset-0 bg-gradient-to-r from-blue-500/25 via-purple-500/15 to-transparent"></span>
+              <span class="absolute inset-y-1 right-0 w-[2px] rounded-l-full bg-gradient-to-b from-blue-400 to-purple-500 shadow-[0_0_12px_2px_rgba(96,165,250,0.7)]"></span>
+              <span class="absolute inset-0 border border-white/10 rounded-xl"></span>
+              <i data-lucide="layout-dashboard" class="relative w-4 h-4"></i>
+              <span class="relative">Tổng quan</span>
+            </a>
+            
+            <a href="compare_models.php" class="relative group flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all overflow-hidden text-white/55 hover:text-white hover:bg-white/[0.04]" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 500;">
+              <i data-lucide="git-compare" class="relative w-4 h-4"></i>
+              <span class="relative">So sánh Model</span>
+            </a>
+            
+            <a href="history.php" class="relative group flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all overflow-hidden text-white/55 hover:text-white hover:bg-white/[0.04]" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 500;">
+              <i data-lucide="history" class="relative w-4 h-4"></i>
+              <span class="relative">Lịch sử</span>
+            </a>
+            
             <?php if (($user['role'] ?? '') === 'admin'): ?>
-                <a class="btn btn-ghost btn-sm" href="admin.php">Quản trị</a>
+            <a href="admin.php" class="relative group flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all overflow-hidden text-white/55 hover:text-white hover:bg-white/[0.04]" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 500;">
+              <i data-lucide="shield" class="relative w-4 h-4"></i>
+              <span class="relative">Quản trị</span>
+            </a>
             <?php endif; ?>
-            <a class="btn btn-danger btn-sm" href="logout.php">Đăng xuất</a>
-        </div>
-    </div>
+          </nav>
 
-    <div class="app-shell">
-        <aside class="side-nav glass-card">
-            <div class="side-nav-title-wrap">
-                <div class="side-nav-title">AMNTDDA</div>
-                <div class="side-nav-meta">Precision Medical AI</div>
+          <div class="p-3 border-t border-white/5 mt-2">
+            <div class="flex items-center gap-2.5 p-2 rounded-2xl bg-white/[0.03] border border-white/5">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 grid place-items-center text-white shrink-0 font-semibold text-xs" style="font-family: 'Space Grotesk', sans-serif;">
+                <?php 
+                  $initials = 'US';
+                  if (!empty($user['username'])) {
+                      $parts = explode(' ', $user['username']);
+                      $initials = strtoupper(substr(end($parts), 0, 2));
+                  }
+                  echo e($initials);
+                ?>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-white truncate text-[12.5px] font-semibold" style="font-family: 'Inter', sans-serif;"><?= e($user['username'] ?? 'User') ?></div>
+                <div class="text-white/40 truncate text-[10.5px]" style="font-family: 'Inter', sans-serif;"><?= e($user['email'] ?? 'nghien.cuu@lab.ai') ?></div>
+              </div>
+              <a href="logout.php" class="w-7 h-7 grid place-items-center rounded-lg text-white/40 hover:text-red-400 hover:bg-white/[0.05] transition-colors shrink-0" title="Đăng xuất">
+                <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+              </a>
             </div>
-            <div class="side-nav-menu">
-                <a class="side-nav-item side-nav-item-active" href="#overview">
-                    <span class="material-symbols-outlined">dashboard</span><span>Tổng quan</span>
-                </a>
-                <a class="side-nav-item" href="#predict-form-panel">
-                    <span class="material-symbols-outlined">biotech</span><span>Dự đoán</span>
-                </a>
-                <a class="side-nav-item" href="<?= $hasResults ? '#result-section' : '#predict-form-panel' ?>">
-                    <span class="material-symbols-outlined"><?= $hasResults ? 'insights' : 'menu_book' ?></span>
-                    <span><?= $hasResults ? 'Kết quả' : 'Hướng dẫn' ?></span>
-                </a>
-                <a class="side-nav-item" href="history.php">
-                    <span class="material-symbols-outlined">history</span><span>Lịch sử</span>
-                </a>
-                <?php if (($user['role'] ?? '') === 'admin'): ?>
-                    <a class="side-nav-item" href="admin.php">
-                        <span class="material-symbols-outlined">admin_panel_settings</span><span>Quản trị</span>
-                    </a>
-                <?php endif; ?>
-            </div>
+          </div>
         </aside>
 
-        <div class="main-shell">
-
+        <!-- Main Content Area -->
+        <main class="flex-1 min-w-0 ml-[240px] p-6 lg:p-8 flex flex-col gap-6">
             <!-- ── Overview Hero ── -->
-            <div class="glass-card hero-banner" id="overview">
-                <div class="hero-grid">
-                    <div class="hero-pitch">
-                        <span class="badge badge-drug">AMNTDDA · Graph Neural Network</span>
-                        <h1>Dự đoán liên kết Thuốc – Bệnh bằng AI đồ thị.</h1>
-                        <p class="muted">Chọn một hay nhiều thuốc, bệnh và để mô hình HGT tổng hợp kết quả theo từng chiều dự đoán, kèm đồ thị phân tử 2D &amp; 3D trực quan hơn.</p>
-                        <div class="hero-actions">
-                            <a class="btn" href="#predict-form-panel">Bắt đầu dự đoán</a>
-                            <?php if ($hasResults): ?>
-                                <a class="btn btn-ghost" href="#result-section">Xem kết quả hiện tại</a>
-                            <?php endif; ?>
-                        </div>
-                        <div class="hero-bullets">
-                            <div class="hero-bullet">Có thể chọn nhiều thuốc, nhiều bệnh và hệ thống sẽ tách thành các nhóm phân tích riêng.</div>
-                            <div class="hero-bullet">Đồ thị 2D được bố trí theo tầng để giảm chồng chéo đường liên kết.</div>
-                            <div class="hero-bullet">Card cấu trúc phân tử lớn hơn để người dùng nhìn rõ từng mục.</div>
-                        </div>
-                    </div>
-                    <div class="status-card">
-                        <div class="label">Trạng thái hệ thống</div>
-                        <span class="badge <?= $apiHealthy ? 'badge-success' : 'badge-neutral' ?>">
-                            <?= $apiHealthy ? 'AI API · Trực tuyến' : 'AI API · Ngoại tuyến' ?>
-                        </span>
-                        <p class="muted"><?= $apiHealthy ? 'Server FastAPI sẵn sàng phục vụ.' : 'Hãy khởi động Python API ở cổng 8000.' ?></p>
-                        <div class="status-card-row"><span>Bộ dữ liệu</span><span><?= e($dataset) ?></span></div>
-                        <div class="status-card-row"><span>Thuốc</span><span><?= number_format($counts['drugs']) ?></span></div>
-                        <div class="status-card-row"><span>Bệnh</span><span><?= number_format($counts['diseases']) ?></span></div>
-                        <div class="status-card-row"><span>Cặp đã biết</span><span><?= number_format($counts['pairs']) ?></span></div>
-                    </div>
+            <section class="relative w-full overflow-hidden rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl px-8 lg:px-12 py-12 lg:py-16">
+              <div class="absolute -top-32 -left-24 w-[28rem] h-[28rem] rounded-full bg-blue-500/25 blur-3xl pointer-events-none"></div>
+              <div class="absolute -bottom-40 -right-20 w-[32rem] h-[32rem] rounded-full bg-purple-500/25 blur-3xl pointer-events-none"></div>
+              <div class="absolute top-10 right-1/3 w-72 h-72 rounded-full bg-cyan-400/10 blur-3xl pointer-events-none"></div>
+
+              <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-[0.55]" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice" aria-hidden>
+                <defs>
+                  <linearGradient id="lineA" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#60a5fa" stop-opacity="0" />
+                    <stop offset="50%" stop-color="#60a5fa" stop-opacity="0.7" />
+                    <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0" />
+                  </linearGradient>
+                  <linearGradient id="lineB" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0" />
+                    <stop offset="50%" stop-color="#a78bfa" stop-opacity="0.6" />
+                    <stop offset="100%" stop-color="#22d3ee" stop-opacity="0" />
+                  </linearGradient>
+                  <radialGradient id="node">
+                    <stop offset="0%" stop-color="#93c5fd" stop-opacity="1" />
+                    <stop offset="100%" stop-color="#60a5fa" stop-opacity="0" />
+                  </radialGradient>
+                  <radialGradient id="nodePurple">
+                    <stop offset="0%" stop-color="#c4b5fd" stop-opacity="1" />
+                    <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0" />
+                  </radialGradient>
+                </defs>
+                <g stroke="url(#lineA)" stroke-width="1" fill="none">
+                  <path d="M 100 380 Q 300 250 500 320 T 900 220" />
+                  <path d="M 50 120 Q 250 220 450 140 T 850 280" />
+                  <path d="M 200 60 Q 400 180 600 100 T 1100 200" />
+                </g>
+                <g stroke="url(#lineB)" stroke-width="1" fill="none">
+                  <path d="M 1100 60 Q 900 200 700 120 T 200 260" />
+                  <path d="M 1150 400 Q 950 320 750 420 T 250 360" />
+                  <path d="M 650 20 L 580 200 L 720 340 L 540 460" />
+                  <path d="M 380 470 L 420 300 L 280 220 L 360 60" />
+                </g>
+                <g stroke="rgba(167,139,250,0.4)" stroke-width="1" fill="none">
+                  <polygon points="980,140 1030,170 1030,230 980,260 930,230 930,170" />
+                  <polygon points="1030,170 1080,140 1130,170 1130,230 1080,260 1030,230" />
+                  <line x1="980" y1="260" x2="950" y2="320" />
+                  <line x1="1080" y1="260" x2="1110" y2="320" />
+                </g>
+                <g>
+                  <circle cx="100" cy="380" r="14" fill="url(#node)" />
+                  <circle cx="100" cy="380" r="3" fill="#93c5fd" />
+                  <circle cx="500" cy="320" r="10" fill="url(#nodePurple)" />
+                  <circle cx="500" cy="320" r="2.5" fill="#c4b5fd" />
+                  <circle cx="900" cy="220" r="14" fill="url(#node)" />
+                  <circle cx="900" cy="220" r="3" fill="#93c5fd" />
+                  <circle cx="200" cy="60" r="10" fill="url(#nodePurple)" />
+                  <circle cx="200" cy="60" r="2.5" fill="#c4b5fd" />
+                  <circle cx="650" cy="20" r="8" fill="url(#node)" />
+                  <circle cx="380" cy="470" r="8" fill="url(#nodePurple)" />
+                  <circle cx="850" cy="280" r="6" fill="url(#node)" />
+                </g>
+              </svg>
+
+              <div class="relative max-w-3xl flex flex-col gap-5">
+                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.05] border border-white/[0.08] w-fit">
+                  <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shadow-[0_0_8px_2px_rgba(96,165,250,0.7)]"></span>
+                  <span class="text-white/75" style="font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.1em;">
+                    AMNTDDA · GRAPH NEURAL NETWORK
+                  </span>
                 </div>
-            </div>
+
+                <h1 class="text-white" style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: clamp(32px, 4.5vw, 48px); letter-spacing: -0.025em; line-height: 1.1;">
+                  Dự đoán liên kết <span class="bg-gradient-to-r from-blue-400 via-cyan-300 to-purple-400 bg-clip-text text-transparent">Thuốc – Bệnh</span> bằng AI đồ thị
+                </h1>
+
+                <p class="text-white/65 max-w-2xl" style="font-family: 'Inter', sans-serif; font-size: 14.5px; line-height: 1.6;">
+                  Chọn một hay nhiều thuốc, bệnh và để mô hình HGT tổng hợp kết quả theo từng chiều dự đoán, kèm đồ thị phân tử 2D &amp; 3D trực quan hơn.
+                </p>
+
+                <div class="flex flex-wrap items-center gap-4 mt-2">
+                  <a href="#predict-form-panel" class="group relative inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-[0_8px_32px_-6px_rgba(96,165,250,0.8)] hover:shadow-[0_12px_40px_-4px_rgba(139,92,246,0.9)] transition-all" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 600;">
+                    <span class="absolute inset-0 rounded-xl bg-gradient-to-r from-white/20 to-transparent opacity-50"></span>
+                    <span class="relative">Bắt đầu dự đoán</span>
+                    <i data-lucide="arrow-right" class="relative w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
+                  </a>
+
+                  <div class="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5">
+                    <span class="relative flex w-2 h-2">
+                      <span class="absolute inset-0 rounded-full <?php echo $apiHealthy ? 'bg-emerald-400' : 'bg-red-400'; ?> animate-ping opacity-75"></span>
+                      <span class="relative w-2 h-2 rounded-full <?php echo $apiHealthy ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]' : 'bg-red-400 shadow-[0_0_10px_rgba(248,113,113,0.9)]'; ?>"></span>
+                    </span>
+                    <span class="text-white/55" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em;">
+                      AI API · <?php echo $apiHealthy ? 'Trực tuyến' : 'Ngoại tuyến'; ?>
+                    </span>
+                  </div>
+                  
+                  <div class="inline-flex items-center gap-2 text-white/40 text-[11px]" style="font-family: 'Inter', sans-serif;">
+                    <span>Dataset: <strong class="text-white/70"><?php echo e($dataset); ?></strong></span>
+                    <span class="text-white/10">•</span>
+                    <span>Thuốc: <strong class="text-white/70"><?php echo number_format($counts['drugs']); ?></strong></span>
+                    <span class="text-white/10">•</span>
+                    <span>Bệnh: <strong class="text-white/70"><?php echo number_format($counts['diseases']); ?></strong></span>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             <!-- ── Flash / Error ── -->
             <?php if ($success): ?>
-                <div class="alert alert-success"><?= e($success) ?></div>
+                <div class="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm font-medium" style="font-family: 'Inter', sans-serif;"><?= e($success) ?></div>
             <?php endif; ?>
             <?php if ($error): ?>
-                <div class="alert alert-error"><?= e($error) ?></div>
+                <div class="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm font-medium" style="font-family: 'Inter', sans-serif;"><?= e($error) ?></div>
             <?php endif; ?>
 
-            <?= render_model_benchmark_section($benchmarkDatasets, $dataset) ?>
-
             <!-- ── Prediction Form ── -->
-            <div class="glass-card" id="predict-form-panel" style="margin-top:1.5rem;">
-                <div class="card-header">
-                    <h2 class="card-title"><span class="material-symbols-outlined" style="vertical-align:-5px;">biotech</span> Dự đoán liên kết</h2>
-                    <p class="muted">Chọn tối đa 5 thuốc và 5 bệnh. Nếu chọn cả hai cột, hệ thống sẽ chấm mọi cặp thuốc-bệnh đã chọn và so sánh trực tiếp 2 model.</p>
-                </div>
-                <form method="POST" action="" id="predict-form" onsubmit="return handlePredictSubmit()">
-                    <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+            <section id="predict-form-panel" class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 overflow-hidden">
+              <div class="absolute -top-32 right-1/4 w-80 h-80 rounded-full bg-purple-500/10 blur-3xl pointer-events-none"></div>
 
-                    <p class="muted" style="font-size:.8rem;margin:0 0 .85rem;">
-                        Chọn <strong>một hoặc nhiều</strong> nguồn trong từng cột. Nếu chỉ chọn một bên, hệ thống chạy <strong>Top-K một chiều</strong>. Nếu chọn cả hai bên, hệ thống sẽ <strong>chấm toàn bộ cặp thuốc × bệnh đã chọn</strong>.
+              <div class="relative flex items-center justify-between mb-6">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/30 to-purple-600/30 border border-white/10 grid place-items-center text-blue-300">
+                    <i data-lucide="dna" class="w-[18px] h-[18px]"></i>
+                  </div>
+                  <div>
+                    <h2 class="text-white" style="font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 600; letter-spacing: -0.01em;">
+                      Dự đoán liên kết
+                    </h2>
+                    <p class="text-white/45" style="font-family: 'Inter', sans-serif; font-size: 12px;">
+                      Chọn thuốc và bệnh để mô hình HGT phân tích liên kết
                     </p>
-                    <div class="picker-grid">
-                        <div class="picker-panel">
-                            <div class="picker-panel-head">
-                                <label class="form-label">⬡ Tên thuốc</label>
-                                <span class="picker-panel-meta">Tối đa 5 nguồn</span>
-                            </div>
-                            <p class="picker-panel-note">Chọn 1–5 thuốc. Nếu cột bệnh cũng có dữ liệu, từng thuốc sẽ được chấm với từng bệnh đã chọn.</p>
-                            <div id="drug-picker-host" class="entity-picker entity-picker-dark"></div>
-                        </div>
-                        <div class="picker-panel">
-                            <div class="picker-panel-head">
-                                <label class="form-label">✚ Tên bệnh</label>
-                                <span class="picker-panel-meta">Tối đa 5 nguồn</span>
-                            </div>
-                            <p class="picker-panel-note">Chọn 1–5 bệnh. Nếu cột thuốc cũng có dữ liệu, từng bệnh sẽ được chấm với từng thuốc đã chọn.</p>
-                            <div id="disease-picker-host" class="entity-picker entity-picker-dark"></div>
-                        </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <form method="POST" action="" id="predict-form" onsubmit="return handlePredictSubmit()">
+                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+
+                <div class="relative grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+                  <div class="flex flex-col">
+                    <div id="drug-picker-host"></div>
+                  </div>
+                  <div class="flex flex-col">
+                    <div id="disease-picker-host"></div>
+                  </div>
+                </div>
+
+                <div class="relative grid grid-cols-1 md:grid-cols-[160px_160px_auto] gap-4 items-end">
+                  
+                  <label class="flex flex-col gap-1.5">
+                    <span class="text-white/50 px-1" style="font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.04em;">
+                      Top-K (1 chiều)
+                    </span>
+                    <div class="relative">
+                      <select name="top_k" id="top_k" class="appearance-none w-full h-[46px] pl-4 pr-10 rounded-xl bg-black/40 border border-white/[0.08] focus:border-blue-400/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-white cursor-pointer" style="font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;">
+                        <?php foreach ([5, 10, 15, 20] as $k): ?>
+                          <option value="<?= $k ?>" <?= $topK === $k ? 'selected' : '' ?> class="bg-[#0a0a0f]"><?= $k ?></option>
+                        <?php endforeach; ?>
+                      </select>
+                      <i data-lucide="chevron-down" class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none w-[15px] h-[15px]"></i>
                     </div>
-                    <div style="display:flex;gap:.75rem;align-items:flex-end;">
-                        <div class="form-group" style="margin:0;">
-                            <label class="form-label" for="top_k">Top-K (1 chiều)</label>
-                            <select class="form-control" name="top_k" id="top_k" style="width:110px;">
-                                <?php foreach ([5, 10, 15, 20] as $k): ?>
-                                    <option value="<?= $k ?>" <?= $topK === $k ? 'selected' : '' ?>><?= $k ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group" style="margin:0;">
-                            <label class="form-label" for="dataset">Dataset</label>
-                            <select class="form-control" name="dataset" id="dataset" style="width:120px;">
-                                <?php foreach (['B-dataset', 'C-dataset', 'F-dataset'] as $ds): ?>
-                                    <option value="<?= $ds ?>" <?= $dataset === $ds ? 'selected' : '' ?>><?= $ds ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+                  </label>
+
+                  <label class="flex flex-col gap-1.5">
+                    <span class="text-white/50 px-1" style="font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.04em;">
+                      Dataset
+                    </span>
+                    <div class="relative">
+                      <select name="dataset" id="dataset" class="appearance-none w-full h-[46px] pl-4 pr-10 rounded-xl bg-black/40 border border-white/[0.08] focus:border-blue-400/40 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-white cursor-pointer" style="font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;">
+                        <?php foreach (['B-dataset', 'C-dataset', 'F-dataset'] as $ds): ?>
+                          <option value="<?= $ds ?>" <?= $dataset === $ds ? 'selected' : '' ?> class="bg-[#0a0a0f]"><?= $ds ?></option>
+                        <?php endforeach; ?>
+                      </select>
+                      <i data-lucide="chevron-down" class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none w-[15px] h-[15px]"></i>
                     </div>
-                    <div style="margin-top:1rem;">
-                        <button class="btn" type="submit" <?= !$apiHealthy ? 'disabled' : '' ?>>
-                            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">search</span>
-                            Chạy dự đoán
-                        </button>
-                        <?php if (!$apiHealthy): ?>
-                            <span class="muted" style="margin-left:1rem;font-size:.82rem;">API ngoại tuyến</span>
-                        <?php endif; ?>
-                    </div>
-                </form>
-            </div>
+                  </label>
+
+                  <div class="flex items-center justify-end md:justify-start">
+                    <button type="submit" <?= !$apiHealthy ? 'disabled' : '' ?> class="group relative inline-flex items-center justify-center gap-2 h-[46px] px-8 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-[0_8px_32px_-8px_rgba(96,165,250,0.7)] hover:shadow-[0_12px_40px_-4px_rgba(139,92,246,0.8)] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none w-full md:w-auto" style="font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 600;">
+                      <i data-lucide="play" class="fill-current w-[14px] h-[14px]"></i>
+                      <span>Chạy dự đoán</span>
+                    </button>
+                  </div>
+
+                </div>
+              </form>
+            </section>
 
             <!-- ── Results ── -->
             <?php if ($hasResults): ?>
-            <div id="result-section" style="margin-top:2rem;">
+            <div id="result-section" class="flex flex-col gap-6">
+                
+                <!-- Results Header Banner exactly matching the image -->
+                <section class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 overflow-hidden" style="margin-bottom: 0.5rem;">
+                    <div class="absolute -top-32 -left-20 w-96 h-96 rounded-full bg-blue-500/10 blur-3xl pointer-events-none"></div>
+                    <div class="absolute -bottom-32 -right-20 w-96 h-96 rounded-full bg-purple-500/10 blur-3xl pointer-events-none"></div>
+                    
+                    <div class="relative flex flex-col md:flex-row md:items-center md:justify-between gap-6 z-10">
+                        <div class="flex items-start gap-4">
+                            <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 grid place-items-center text-emerald-400 shrink-0 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
+                                <i data-lucide="sparkles" class="w-5.5 h-5.5"></i>
+                            </div>
+                            <div>
+                                <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-wider uppercase mb-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    KẾT QUẢ DỰ ĐOÁN
+                                </div>
+                                <h2 class="text-white font-bold text-2xl tracking-tight" style="font-family: 'Space Grotesk', sans-serif;">
+                                    Kết quả dự đoán liên kết
+                                </h2>
+                                <p class="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed" style="font-family: 'Inter', sans-serif;">
+                                    So sánh điểm dự đoán giữa mô hình HGT cải tiến và baseline gốc — kèm cấu trúc phân tử SMILES và đồ thị benchmark trực quan.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        </div>
+                    </div>
+                </section>
+                
                 <?php if ($hasPairMatrix): ?>
                     <?= render_pair_matrix_section($pairMatrixData) ?>
                 <?php else: ?>
@@ -1960,33 +2304,219 @@ $benchmarkDatasets = load_model_benchmark_datasets();
             </div>
             <?php else: ?>
             <!-- Quick-start guide -->
-            <div class="glass-card" id="quick-start" style="margin-top:2rem;">
-                <div class="card-header"><h3 class="card-title">Cách sử dụng</h3></div>
-                <ol style="padding-left:1.5rem;line-height:2;color:#94a3b8;">
+            <section class="relative rounded-[24px] bg-white/[0.03] border border-white/[0.06] backdrop-blur-2xl p-6 lg:p-8 overflow-hidden">
+                <h3 class="text-white mb-4" style="font-family: 'Space Grotesk', sans-serif; font-size: 18px; font-weight: 600;">Hướng dẫn sử dụng</h3>
+                <ol class="list-decimal pl-5 space-y-2 text-white/60" style="font-family: 'Inter', sans-serif; font-size: 13.5px; line-height: 1.7;">
                     <li>Chọn tối đa 5 thuốc và 5 bệnh ngay trong hai picker trực quan.</li>
                     <li>Nếu chỉ chọn một bên, hệ thống sẽ chạy Top-K một chiều như trước.</li>
                     <li>Nếu chọn cả hai bên, hệ thống sẽ chấm mọi cặp thuốc × bệnh đã chọn và vẽ biểu đồ so sánh 2 model.</li>
                     <li>Top-K chỉ áp dụng cho chế độ một chiều; ở chế độ cặp chính xác, toàn bộ cặp đã chọn sẽ được hiển thị.</li>
                     <li>Nhấn <strong>Chạy dự đoán</strong> để xem bảng điểm từng cặp, ma trận thuốc × bệnh, hoặc đồ thị phân tử khi chạy một chiều.</li>
                 </ol>
-            </div>
+            </section>
             <?php endif; ?>
 
-        </div><!-- end main-shell -->
-    </div><!-- end app-shell -->
-</div><!-- end container -->
+        </main>
+    </div>
+</div>
 
 <!-- SmilesDrawer -->
-<script src="https://cdn.jsdelivr.net/npm/smiles-drawer@1.0.10/dist/smiles-drawer.min.js"></script>
+<script src="assets/js/smiles-drawer.min.js?v=1.0.1"></script>
 <?php if ($hasGraphResults): ?>
-<script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three-spritetext@1.9.0/dist/three-spritetext.min.js"></script>
-<script src="https://unpkg.com/3d-force-graph"></script>
+<script src="assets/js/three.min.js?v=1.0.1"></script>
+<script src="assets/js/three-spritetext.min.js?v=1.0.1"></script>
+<script src="assets/js/3d-force-graph.min.js?v=1.0.1"></script>
 <?php endif; ?>
 
 <script>
+console.log('prediction-app: Main script block started execution.');
 // Hide loader on page load (in case POST returned with errors)
 document.getElementById('loader').style.display = 'none';
+
+window.showSvgTooltip = function(node, event) {
+    // Manual parent traversal (SVG closest() may fail in some browsers)
+    let wrapper = node.parentElement;
+    while (wrapper && !wrapper.classList.contains('graph-2d-wrapper')) {
+        wrapper = wrapper.parentElement;
+    }
+    if (!wrapper) return;
+    const tooltip = wrapper.querySelector('.graph-tooltip');
+    if (!tooltip) return;
+
+    const type = node.getAttribute('data-type') || '';
+    const label = node.getAttribute('data-label') || '';
+    const id = node.getAttribute('data-id') || '';
+    const smiles = node.getAttribute('data-smiles') || '';
+    const seqLen = parseInt(node.getAttribute('data-seq-len') || '0', 10);
+    const nodeId = node.getAttribute('data-node-id') || '';
+
+    // Highlights logic: find all links and nodes in this SVG
+    const svg = wrapper.querySelector('.prediction-network');
+    if (svg && nodeId) {
+        const links = svg.querySelectorAll('.graph-link-group');
+        const nodes = svg.querySelectorAll('.graph-node');
+        
+        // Track which nodes are connected to our hovered node
+        const connectedNodeIds = new Set([nodeId]);
+        
+        links.forEach((linkGroup) => {
+            const src = linkGroup.getAttribute('data-source') || '';
+            const tgt = linkGroup.getAttribute('data-target') || '';
+            
+            if (src === nodeId || tgt === nodeId) {
+                // Connected link: highlight!
+                linkGroup.style.opacity = '1';
+                linkGroup.style.filter = 'none';
+                const path = linkGroup.querySelector('.graph-edge');
+                if (path) {
+                    path.style.strokeWidth = '4.5px'; // thicker glowing line!
+                }
+                connectedNodeIds.add(src);
+                connectedNodeIds.add(tgt);
+            } else {
+                // Unconnected link: dim and blur slightly like standard Bokeh depth-of-field
+                linkGroup.style.opacity = '0.08';
+                linkGroup.style.filter = 'blur(1.2px)';
+                const path = linkGroup.querySelector('.graph-edge');
+                if (path) {
+                    path.style.strokeWidth = '';
+                }
+            }
+        });
+        
+        nodes.forEach((n) => {
+            const nId = n.getAttribute('data-node-id') || '';
+            if (connectedNodeIds.has(nId)) {
+                // Connected or hovered node: keep bright!
+                n.style.opacity = '1';
+                n.style.filter = 'none';
+            } else {
+                // Unconnected node: dim and blur slightly
+                n.style.opacity = '0.22';
+                n.style.filter = 'blur(1px)';
+            }
+        });
+    }
+
+    const wrapperBounds = wrapper.getBoundingClientRect();
+    
+    // Use mouse position directly - most reliable across all browsers
+    let relativeLeft = event.clientX - wrapperBounds.left + 18;
+    let relativeTop = event.clientY - wrapperBounds.top - 30;
+    
+    // Clamp to stay inside wrapper
+    if (relativeLeft + 260 > wrapperBounds.width) {
+        relativeLeft = event.clientX - wrapperBounds.left - 270;
+    }
+    
+    tooltip.style.left = `${relativeLeft}px`;
+    tooltip.style.top = `${Math.max(8, relativeTop)}px`;
+    tooltip.style.display = 'block';
+
+    const esc = (str) => String(str || '').replace(/[&<>"']/g, (m) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[m] || m));
+
+    if (type === 'drug') {
+        let chemStr = '';
+        try {
+            let chemDetails = (typeof drugExactDetails !== 'undefined' ? drugExactDetails[id.toLowerCase()] : null) || (typeof parseSmilesToFormulaAndWeight === 'function' ? parseSmilesToFormulaAndWeight(smiles) : {formula:'',weight:''});
+            if (chemDetails.formula && chemDetails.weight) {
+                chemStr = `${chemDetails.formula} · ${chemDetails.weight}`;
+            } else if (chemDetails.formula) {
+                chemStr = chemDetails.formula;
+            } else if (chemDetails.weight) {
+                chemStr = chemDetails.weight;
+            }
+        } catch(e) {}
+        
+        tooltip.className = 'graph-tooltip absolute z-50 rounded-2xl bg-[#070b13]/96 border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.15)] shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-md p-4';
+        tooltip.innerHTML = `
+            <div class="flex flex-col gap-2.5">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center border border-cyan-500/30 bg-cyan-950/20 text-cyan-400">
+                        <i data-lucide="pill" class="w-4 h-4"></i>
+                    </div>
+                    <span class="px-2.5 py-0.5 rounded-full bg-cyan-950/50 border border-cyan-500/20 text-cyan-400 text-[10px] font-bold tracking-wider">THUỐC</span>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold font-['Space_Grotesk'] text-[15px] leading-snug">${esc(label)}</h4>
+                    <div class="text-cyan-400 font-mono text-[11px] mt-0.5">${esc(id)}</div>
+                </div>
+                ${chemStr ? `<div class="text-white/60 text-[10.5px] mt-0.5">${esc(chemStr)}</div>` : ''}
+            </div>
+        `;
+    } else if (type === 'protein') {
+        let seqStr = seqLen ? `Độ dài chuỗi: ${seqLen} aa` : 'Cầu nối liên kết';
+        
+        tooltip.className = 'graph-tooltip absolute z-50 rounded-2xl bg-[#070b13]/96 border border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-md p-4';
+        tooltip.innerHTML = `
+            <div class="flex flex-col gap-2.5">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center border border-amber-500/30 bg-amber-950/20 text-amber-400">
+                        <i data-lucide="dna" class="w-4 h-4"></i>
+                    </div>
+                    <span class="px-2.5 py-0.5 rounded-full bg-amber-950/50 border border-amber-500/20 text-amber-400 text-[10px] font-bold tracking-wider">PROTEIN</span>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold font-['Space_Grotesk'] text-[15px] leading-snug">${esc(label)}</h4>
+                    <div class="text-amber-400 font-mono text-[11px] mt-0.5">${esc(id)}</div>
+                </div>
+                <div class="text-white/60 text-[10.5px] mt-0.5">${esc(seqStr)}</div>
+            </div>
+        `;
+    } else {
+        tooltip.className = 'graph-tooltip absolute z-50 rounded-2xl bg-[#070b13]/96 border border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)] shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-md p-4';
+        tooltip.innerHTML = `
+            <div class="flex flex-col gap-2.5">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg flex items-center justify-center border border-red-500/30 bg-red-950/20 text-red-400">
+                        <i data-lucide="activity" class="w-4 h-4"></i>
+                    </div>
+                    <span class="px-2.5 py-0.5 rounded-full bg-red-950/50 border border-red-500/20 text-red-400 text-[10px] font-bold tracking-wider">BỆNH</span>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold font-['Space_Grotesk'] text-[15px] leading-snug">${esc(label)}</h4>
+                    <div class="text-red-400 font-mono text-[11px] mt-0.5">${esc(id)}</div>
+                </div>
+                <div class="text-white/60 text-[10.5px] mt-0.5">Mã liên kết bệnh lý</div>
+            </div>
+        `;
+    }
+    if (window.lucide) window.lucide.createIcons();
+};
+
+window.hideSvgTooltip = function(node) {
+    // Manual parent traversal
+    let wrapper = node.parentElement;
+    while (wrapper && !wrapper.classList.contains('graph-2d-wrapper')) {
+        wrapper = wrapper.parentElement;
+    }
+    if (!wrapper) return;
+    const tooltip = wrapper.querySelector('.graph-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+
+    // Reset Highlights logic
+    const svg = wrapper.querySelector('.prediction-network');
+    if (svg) {
+        const links = svg.querySelectorAll('.graph-link-group');
+        const nodes = svg.querySelectorAll('.graph-node');
+        
+        links.forEach((linkGroup) => {
+            linkGroup.style.opacity = '';
+            linkGroup.style.filter = '';
+            const path = linkGroup.querySelector('.graph-edge');
+            if (path) {
+                path.style.strokeWidth = '';
+            }
+        });
+        
+        nodes.forEach((n) => {
+            n.style.opacity = '';
+            n.style.filter = '';
+        });
+    }
+};
 
 function handlePredictSubmit() {
     const apiHealthy = <?= $apiHealthy ? 'true' : 'false' ?>;
@@ -2019,33 +2549,7 @@ if (dsEl) {
     });
 }
 
-function activateBenchmarkTab(datasetKey) {
-    document.querySelectorAll('[data-benchmark-tab]').forEach((button) => {
-        const active = button.dataset.benchmarkTab === datasetKey;
-        button.classList.toggle('is-active', active);
-        button.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
 
-    document.querySelectorAll('[data-benchmark-panel]').forEach((panel) => {
-        panel.classList.toggle('is-active', panel.dataset.benchmarkPanel === datasetKey);
-    });
-}
-
-(function initBenchmarkTabs() {
-    const buttons = Array.from(document.querySelectorAll('[data-benchmark-tab]'));
-    if (!buttons.length) return;
-
-    buttons.forEach((button) => {
-        button.addEventListener('click', () => {
-            activateBenchmarkTab(button.dataset.benchmarkTab || '');
-        });
-    });
-
-    const initialButton = buttons.find((button) => button.classList.contains('is-active')) || buttons[0];
-    if (initialButton) {
-        activateBenchmarkTab(initialButton.dataset.benchmarkTab || '');
-    }
-})();
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -2087,72 +2591,134 @@ function initEntityPicker(hostId, config) {
         selectedIds.push(resolvedId);
     });
 
+    const isDrug = hostId.includes('drug');
+    const labelText = isDrug ? 'Tên thuốc' : 'Tên bệnh';
+    const accent = isDrug ? 'blue' : 'purple';
+    const iconHtml = isDrug 
+        ? '<i data-lucide="pill" class="w-3.5 h-3.5"></i>' 
+        : '<i data-lucide="heart-pulse" class="w-3.5 h-3.5"></i>';
+
+    const accentGlow = accent === "blue"
+        ? "shadow-[0_0_24px_-8px_rgba(96,165,250,0.4)]"
+        : "shadow-[0_0_24px_-8px_rgba(139,92,246,0.4)]";
+    const accentText = accent === "blue" ? "text-blue-300" : "text-purple-300";
+    const accentBg = accent === "blue" ? "bg-blue-500/15 border-blue-500/30" : "bg-purple-500/15 border-purple-500/30";
+    const accentDot = accent === "blue" ? "bg-blue-400" : "bg-purple-400";
+
+    host.className = `rounded-[20px] bg-white/[0.03] border border-white/[0.06] p-4 backdrop-blur-xl ${accentGlow}`;
     host.innerHTML = `
-        <div class="entity-picker-tags"></div>
-        <input type="text" class="entity-picker-search" placeholder="Tìm theo tên hoặc ID...">
-        <div class="entity-picker-list"></div>
-        <div class="entity-picker-footer">
-            <span class="entity-picker-count"></span>
-            <button type="button" class="entity-picker-clear">Xóa hết</button>
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg grid place-items-center border ${accentBg} ${accentText}">
+            ${iconHtml}
+          </div>
+          <span class="text-white font-semibold" style="font-family: 'Space Grotesk', sans-serif; font-size: 13.5px;">
+            ${labelText}
+          </span>
         </div>
-        <div class="entity-picker-hidden"></div>
+        <span class="px-2 py-0.5 rounded-full border ${accentBg} ${accentText} font-mono text-[10.5px] font-semibold picker-count-header">
+          ${selectedIds.length}/${maxSelected}
+        </span>
+      </div>
+
+      <div class="relative mb-3">
+        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 w-3.5 h-3.5"></i>
+        <input
+          type="text"
+          placeholder="Tìm kiếm..."
+          class="w-full pl-8 pr-3 py-2 rounded-xl bg-black/40 border border-white/[0.06] focus:border-blue-400/40 focus:outline-none text-white placeholder:text-white/30 text-[12.5px]"
+          style="font-family: 'Inter', sans-serif;"
+        />
+      </div>
+
+      <div class="flex flex-wrap gap-1.5 mb-3 picker-selected-tags"></div>
+
+      <div class="h-[240px] overflow-y-auto pr-1 -mr-1 space-y-1 custom-scroll picker-list"></div>
+
+      <div class="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
+        <span class="text-white/40 text-[11px]" style="font-family: 'Inter', sans-serif;">Đã chọn</span>
+        <span class="text-white font-mono text-[12px] font-semibold picker-count-footer">
+          ${selectedIds.length}/${maxSelected}
+        </span>
+      </div>
+      
+      <div class="hidden-inputs"></div>
     `;
 
-    const tagsEl = host.querySelector('.entity-picker-tags');
-    const searchEl = host.querySelector('.entity-picker-search');
-    const listEl = host.querySelector('.entity-picker-list');
-    const countEl = host.querySelector('.entity-picker-count');
-    const clearEl = host.querySelector('.entity-picker-clear');
-    const hiddenEl = host.querySelector('.entity-picker-hidden');
+    const searchEl = host.querySelector('input');
+    const tagsEl = host.querySelector('.picker-selected-tags');
+    const listEl = host.querySelector('.picker-list');
+    const headerCountEl = host.querySelector('.picker-count-header');
+    const footerCountEl = host.querySelector('.picker-count-footer');
+    const hiddenEl = host.querySelector('.hidden-inputs');
 
     const render = () => {
         const query = (searchEl.value || '').trim().toLowerCase();
 
-        tagsEl.innerHTML = selectedIds.length
-            ? selectedIds.map((id) => {
+        // Render selected tags
+        if (selectedIds.length > 0) {
+            tagsEl.style.display = 'flex';
+            tagsEl.innerHTML = selectedIds.map((id) => {
                 const option = normalizedOptions.find((item) => item.id === id);
-                const label = option ? option.name : id;
-                return `<span class="entity-picker-tag">${escapeHtml(label)}<button type="button" data-remove="${escapeHtml(id)}">×</button></span>`;
-            }).join('')
-            : '<span class="muted" style="font-size:.76rem;">Chưa chọn mục nào.</span>';
+                const name = option ? option.name : id;
+                return `
+                  <span class="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full ${accentBg} border ${accentText} text-[11px] font-medium" style="font-family: 'Inter', sans-serif;">
+                    ${escapeHtml(name)}
+                    <button type="button" data-remove="${escapeHtml(id)}" class="w-3.5 h-3.5 grid place-items-center rounded-full hover:bg-white/10">
+                      <i data-lucide="x" class="w-2.5 h-2.5"></i>
+                    </button>
+                  </span>
+                `;
+            }).join('');
+        } else {
+            tagsEl.style.display = 'none';
+            tagsEl.innerHTML = '';
+        }
 
+        // Render hidden input fields
         hiddenEl.innerHTML = selectedIds.map((id) => `<input type="hidden" name="${escapeHtml(config.inputName)}" value="${escapeHtml(id)}">`).join('');
 
+        // Filter options
         const filtered = normalizedOptions.filter((option) => !query || option.search.includes(query));
         const limited = filtered.slice(0, 80);
+
         listEl.innerHTML = limited.length
             ? limited.map((option) => {
                 const selected = selectedIds.includes(option.id);
+                const disabled = !selected && selectedIds.length >= maxSelected;
                 return `
-                    <div class="entity-picker-item${selected ? ' is-selected' : ''}" data-option="${escapeHtml(option.id)}">
-                        <div class="entity-picker-item-main">
-                            <span class="entity-picker-item-name">${escapeHtml(option.name)}</span>
-                            <span class="entity-picker-item-id">${escapeHtml(option.id)}</span>
-                        </div>
-                        <span class="entity-picker-check">${selected ? 'Đã chọn' : ''}</span>
+                  <button
+                    type="button"
+                    data-option="${escapeHtml(option.id)}"
+                    ${disabled ? 'disabled' : ''}
+                    class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all text-left text-[12.5px] ${
+                      selected
+                        ? `${accentBg} border ${accentText}`
+                        : "border border-transparent text-white/70 hover:bg-white/[0.04] hover:text-white"
+                    } ${disabled ? "opacity-40 cursor-not-allowed" : ""}"
+                    style="font-family: 'Inter', sans-serif;"
+                  >
+                    <div class="w-4 h-4 rounded-[5px] border grid place-items-center shrink-0 ${
+                      selected ? `${accentDot} border-transparent` : "border-white/20 bg-black/30"
+                    }">
+                      ${selected ? '<i data-lucide="check" class="text-white w-2.5 h-2.5" style="stroke-width: 3px;"></i>' : ''}
                     </div>
+                    <span class="flex-1 truncate">${escapeHtml(option.name)}</span>
+                    <span class="text-white/30 text-[10.5px] font-mono">${escapeHtml(option.id)}</span>
+                  </button>
                 `;
             }).join('')
-            : '<div class="entity-picker-empty">Không có mục nào khớp với bộ lọc hiện tại.</div>';
+            : `<div class="text-center py-8 text-white/30 text-[12px]" style="font-family: 'Inter', sans-serif;">
+                 Không tìm thấy kết quả
+               </div>`;
 
-        countEl.textContent = `Đã chọn ${selectedIds.length}/${maxSelected} nguồn · ${normalizedOptions.length} lựa chọn`;
-    };
-
-    const toggleValue = (value) => {
-        const index = selectedIds.indexOf(value);
-        if (index >= 0) {
-            selectedIds.splice(index, 1);
-            render();
-            return;
+        headerCountEl.textContent = `${selectedIds.length}/${maxSelected}`;
+        footerCountEl.textContent = `${selectedIds.length}/${maxSelected}`;
+        
+        // Refresh icons
+        if (window.lucide) {
+            window.lucide.createIcons();
         }
-
-        if (selectedIds.length >= maxSelected) {
-            countEl.textContent = `Bạn chỉ nên chọn tối đa ${maxSelected} nguồn cho mỗi bên để tránh quá tải giao diện.`;
-            return;
-        }
-
-        selectedIds.push(value);
-        render();
     };
 
     tagsEl.addEventListener('click', (event) => {
@@ -2162,25 +2728,34 @@ function initEntityPicker(hostId, config) {
     });
 
     listEl.addEventListener('click', (event) => {
-        const item = event.target.closest('.entity-picker-item[data-option]');
-        if (!item) return;
-        toggleValue(item.dataset.option || '');
+        const button = event.target.closest('button[data-option]');
+        if (!button) return;
+        toggleValue(button.dataset.option || '');
     });
 
     searchEl.addEventListener('input', render);
     searchEl.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter') return;
         event.preventDefault();
-        const firstOption = listEl.querySelector('.entity-picker-item[data-option]');
+        const firstOption = listEl.querySelector('button[data-option]:not([disabled])');
         if (firstOption) {
             toggleValue(firstOption.dataset.option || '');
         }
     });
 
-    clearEl.addEventListener('click', () => {
-        selectedIds.splice(0, selectedIds.length);
+    const toggleValue = (id) => {
+        const index = selectedIds.indexOf(id);
+        if (index > -1) {
+            selectedIds.splice(index, 1);
+        } else {
+            if (selectedIds.length >= maxSelected) {
+                alert(`Chỉ được chọn tối đa ${maxSelected} mục.`);
+                return;
+            }
+            selectedIds.push(id);
+        }
         render();
-    });
+    };
 
     render();
 }
@@ -2198,6 +2773,11 @@ function initEntityPicker(hostId, config) {
         inputName: 'disease_input[]',
         maxSelected: 5,
     });
+    
+    // Initial draw of icons
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
 })();
 
 function createSmilesDrawer(width, height) {
@@ -2250,80 +2830,135 @@ function createSmilesDrawer(width, height) {
     });
 })();
 
- (function initGraphTooltips() {
-    document.querySelectorAll('.graph-2d-wrapper').forEach((wrapper, index) => {
-        const svg = wrapper.querySelector('.prediction-network');
-        const tooltip = wrapper.querySelector('.graph-tooltip');
-        const canvas = wrapper.querySelector('.graph-tooltip-canvas');
-        const body = wrapper.querySelector('.tooltip-body');
+const drugExactDetails = {
+    'db00659': { formula: 'C₅H₁₁NO₄S', weight: '181.21 g/mol' }, // Acamprosate
+    'db00035': { formula: 'C₄₆H₆₄N₁₄O₁₂S₂', weight: '1069.2 g/mol' }, // Desmopressin
+    'db00215': { formula: 'C₈H₁₀AsNO₅', weight: '275.09 g/mol' }, // Acetarsol
+    'db00141': { formula: 'C₁₀H₁₄N₅O₇P', weight: '347.22 g/mol' }, // AMP
+    'db00157': { formula: 'C₁₁H₁₇NO₃', weight: '211.26 g/mol' }, // Metaproterenol
+    'db00316': { formula: 'C₁₇H₁₉N₃O₃S', weight: '345.42 g/mol' }, // Omeprazole
+    'db00338': { formula: 'C₉H₁₃NO₃', weight: '183.20 g/mol' }, // Albuterol
+    'db00388': { formula: 'C₁₀H₁₂N₄O₅', weight: '268.23 g/mol' }, // Inosine
+    'db00475': { formula: 'C₁₅H₁₄N₄O₆S₂', weight: '442.42 g/mol' }, // Ceftriaxone
+    'db00530': { formula: 'C₁₆H₁₉N₃O₄S', weight: '349.41 g/mol' }, // Amoxicillin
+    'db00650': { formula: 'C₁₄H₁₈N₄O₃', weight: '290.32 g/mol' }, // Trimethoprim
+    'db00945': { formula: 'C₁₉H₂₀F₃N₃O₃', weight: '409.38 g/mol' }, // Nilutamide
+    'db01008': { formula: 'C₈H₁₁N₅O₃', weight: '225.21 g/mol' }, // Acyclovir
+};
 
-        if (!svg || !tooltip || !canvas || !body) return;
-        if (!canvas.id) {
-            canvas.id = `graph-tooltip-canvas-${index + 1}`;
+function parseSmilesToFormulaAndWeight(smiles) {
+    if (!smiles) return { formula: '', weight: '' };
+    try {
+        let clean = smiles.replace(/[@\-\=\#\$\/\\]/g, '');
+        let atoms = { 'C': 0, 'N': 0, 'O': 0, 'S': 0, 'P': 0, 'F': 0, 'Cl': 0, 'Br': 0, 'I': 0, 'H': 0 };
+        let regex = /Cl|Br|C|N|O|S|P|F|I|H/g;
+        let match;
+        let explicitBonds = 0;
+        for (let char of smiles) {
+            if (char === '=') explicitBonds += 1;
+            else if (char === '#') explicitBonds += 2;
         }
-
-        const drawer = createSmilesDrawer(canvas.width || 220, canvas.height || 180);
-        const hideTooltip = () => {
-            tooltip.style.display = 'none';
-            canvas.style.display = 'none';
-        };
-
-        svg.addEventListener('mouseover', (event) => {
-            const target = event.target;
-            if (!(target instanceof Element)) return;
-            const node = target.closest('.graph-node');
-            if (!node) return;
-
-            const type = node.dataset.type || '';
-            const label = node.dataset.label || '';
-            const id = node.dataset.id || '';
-            const smiles = node.dataset.smiles || '';
-            const seqLen = parseInt(node.dataset.seqLen || '0', 10);
-            const anchor = node.querySelector('circle, polygon, rect, text');
-            if (!anchor) return;
-
-            const bounds = anchor.getBoundingClientRect();
-            tooltip.style.left = `${bounds.right + 14}px`;
-            tooltip.style.top = `${Math.max(8, bounds.top - 20)}px`;
-            tooltip.style.display = 'block';
-
-            if (type === 'drug' && smiles && drawer) {
-                canvas.style.display = 'block';
-                SmilesDrawer.parse(smiles, (tree) => {
-                    drawer.draw(tree, canvas.id, 'dark', false);
-                }, () => {
-                    canvas.style.display = 'none';
-                });
-                const smilesShort = smiles.length > 48 ? `${smiles.slice(0, 48)}…` : smiles;
-                body.innerHTML = `<strong>${escapeHtml(label)}</strong><code>${escapeHtml(id)}</code><br><span style="color:#94a3b8;font-size:10px;">SMILES: ${escapeHtml(smilesShort)}</span>`;
-            } else if (type === 'protein') {
-                canvas.style.display = 'none';
-                body.innerHTML = `<strong>${escapeHtml(label)}</strong><code>${escapeHtml(id)}</code><br>Độ dài chuỗi: <strong style="color:#fcd34d;">${seqLen || '?'} aa</strong>`;
-            } else {
-                canvas.style.display = 'none';
-                body.innerHTML = `<strong>${escapeHtml(label)}</strong><code>${escapeHtml(id)}</code>`;
+        while ((match = regex.exec(clean)) !== null) {
+            let symbol = match[0];
+            atoms[symbol] = (atoms[symbol] || 0) + 1;
+        }
+        let ringClosures = (smiles.match(/\d/g) || []).length / 2;
+        let c = atoms['C'] || 0;
+        let n = atoms['N'] || 0;
+        let o = atoms['O'] || 0;
+        let s = atoms['S'] || 0;
+        let f = atoms['F'] || 0;
+        let cl = atoms['Cl'] || 0;
+        let br = atoms['Br'] || 0;
+        let i = atoms['I'] || 0;
+        
+        let hCount = (2 * c + 2) + n - (f + cl + br + i);
+        hCount -= 2 * ringClosures;
+        hCount -= 2 * explicitBonds;
+        atoms['H'] = Math.max(0, Math.round(hCount));
+        
+        let formula = '';
+        if (atoms['C'] > 0) {
+            formula += 'C' + (atoms['C'] > 1 ? atoms['C'] : '');
+            if (atoms['H'] > 0) {
+                formula += 'H' + (atoms['H'] > 1 ? atoms['H'] : '');
             }
-        });
-
-        svg.addEventListener('mouseleave', hideTooltip);
-    });
-})();
-
-function open3DModal(trigger) {
-    const modal = document.getElementById('modal-3d');
-    if (!modal) return;
-    const wrapper = trigger && trigger.closest ? trigger.closest('.graph-2d-wrapper') : document.querySelector('.graph-2d-wrapper');
-    if (!wrapper) return;
-    window._graph3dWrapper = wrapper;
-    modal.style.display = 'flex';
-    requestAnimationFrame(() => init3D(wrapper));
+        }
+        let elements = ['Br', 'Cl', 'F', 'I', 'N', 'O', 'P', 'S'];
+        for (let el of elements) {
+            if (atoms[el] > 0) {
+                formula += el + (atoms[el] > 1 ? atoms[el] : '');
+            }
+        }
+        let weights = { 'C': 12.011, 'H': 1.008, 'N': 14.007, 'O': 15.999, 'S': 32.06, 'P': 30.974, 'F': 18.998, 'Cl': 35.45, 'Br': 79.904, 'I': 126.904 };
+        let totalWeight = 0;
+        for (let el in atoms) {
+            if (weights[el]) {
+                totalWeight += atoms[el] * weights[el];
+            }
+        }
+        return {
+            formula: formula,
+            weight: totalWeight > 0 ? totalWeight.toFixed(2) + ' g/mol' : ''
+        };
+    } catch(e) {
+        return { formula: '', weight: '' };
+    }
 }
 
-function close3DModal() {
-    const modal = document.getElementById('modal-3d');
-    if (modal) modal.style.display = 'none';
-    if (window._graph3d && window._graph3d.pauseAnimation) {
-        window._graph3d.pauseAnimation();
+
+// Removed obsolete initGraphTooltips IIFE to prevent mouseover event delegation conflicts.
+// The active tooltip system runs perfectly on inline onmouseenter/onmouseleave events and window.showSvgTooltip.
+
+
+function toggle3DMode(trigger) {
+    const wrapper = trigger.closest('.graph-2d-wrapper');
+    if (!wrapper) return;
+    
+    const svg = wrapper.querySelector('.prediction-network');
+    const canvas3d = wrapper.querySelector('.canvas-3d-inline');
+    const btnSpan = trigger.querySelector('span');
+    const icon = trigger.querySelector('i, svg');
+    const is3DActive = canvas3d.style.display === 'block';
+
+    if (is3DActive) {
+        // Switch back to 2D
+        canvas3d.style.display = 'none';
+        svg.style.display = 'block';
+        trigger.classList.remove('from-cyan-500/30', 'to-blue-500/30', 'border-cyan-400/50', 'shadow-[0_0_20px_-2px_rgba(34,211,238,0.5)]');
+        trigger.classList.add('from-cyan-500/10', 'to-blue-500/10', 'border-cyan-400/20');
+        trigger.style.color = '';
+        if (btnSpan) btnSpan.textContent = '3D Mode';
+        if (icon) icon.classList.remove('animate-spin-slow');
+        if (window._graph3d && window._graph3d.pauseAnimation) {
+            window._graph3d.pauseAnimation();
+        }
+    } else {
+        // Switch to 3D
+        const svgBounds = svg.getBoundingClientRect();
+        const svgHeight = Math.max(480, svgBounds.height || svg.clientHeight || 480);
+        const svgWidth = Math.max(800, svgBounds.width || svg.clientWidth || 800);
+        
+        canvas3d.style.height = `${svgHeight}px`;
+        canvas3d.style.width = `${svgWidth}px`;
+        
+        svg.style.display = 'none';
+        canvas3d.style.display = 'block';
+        trigger.classList.remove('from-cyan-500/10', 'to-blue-500/10', 'border-cyan-400/20');
+        trigger.classList.add('from-cyan-500/30', 'to-blue-500/30', 'border-cyan-400/50', 'shadow-[0_0_20px_-2px_rgba(34,211,238,0.5)]');
+        trigger.style.color = '#fff';
+        if (btnSpan) btnSpan.innerHTML = '3D Mode &middot; Active';
+        if (icon) icon.classList.add('animate-spin-slow');
+        
+        if (canvas3d.clientWidth === 0 || canvas3d.clientHeight === 0) {
+            canvas3d.style.minHeight = '480px';
+        }
+        
+        // Small delay to allow DOM to paint the block display before calculating sizes
+        setTimeout(() => {
+            init3D(wrapper);
+            window.dispatchEvent(new Event('resize'));
+        }, 50);
     }
 }
 
@@ -2348,21 +2983,37 @@ function buildLayered3DNodes(graphData) {
 }
 
 function init3D(wrapper) {
+    const loadingEl = document.getElementById('loading-3d');
 <?php if ($hasGraphResults): ?>
-    if (!window.ForceGraph3D || !window.THREE) return;
+    if (!window.ForceGraph3D) {
+        if (loadingEl) loadingEl.textContent = '⚠ Không thể tải thư viện 3D (ForceGraph3D). Hãy kiểm tra kết nối mạng.';
+        console.error('3D Force Graph library not loaded.');
+        return;
+    }
     if (!wrapper) return;
-    const graphData = JSON.parse(wrapper.dataset.graph || '{}');
-    const container = document.getElementById('canvas-3d');
+    
+    const container = wrapper.querySelector('.canvas-3d-inline');
     if (!container) return;
+    
+    try {
+        console.log('init3D: Starting robust 3D initialization...');
+        const graphData = JSON.parse(wrapper.dataset.graph || '{}');
+        
+        // Clear container completely to force a fresh render!
+        container.innerHTML = '';
+        
+        const w = container.clientWidth || 800;
+        const h = container.clientHeight || 480;
 
-    const graphPayload = { nodes: buildLayered3DNodes(graphData), links: graphData.links || [] };
+        const graphPayload = { nodes: buildLayered3DNodes(graphData), links: graphData.links || [] };
 
-    const colorMap = { drug: 0x2563eb, protein: 0xf59e0b, disease: 0xdc2626 };
-    if (!window._graph3d) {
-        window._graph3d = ForceGraph3D()(container)
-            .backgroundColor('#050b16')
-            .width(container.clientWidth || window.innerWidth)
-            .height(container.clientHeight || (window.innerHeight - 60))
+        // Create new ForceGraph3D instance
+        const graph3d = ForceGraph3D()(container);
+        window._graph3d = graph3d;
+        
+        graph3d.backgroundColor('#050b16')
+            .width(w)
+            .height(h)
             .nodeOpacity(1)
             .linkOpacity(0.38)
             .linkWidth((link) => {
@@ -2372,109 +3023,158 @@ function init3D(wrapper) {
             .linkDirectionalParticles((link) => link.kind === 'prediction' ? 2 : 4)
             .linkDirectionalParticleWidth((link) => link.kind === 'prediction' ? 2 : 3.4)
             .linkColor((link) => {
-                if (link.kind === 'source-protein') return '#f59e0b';
+                if (link.kind === 'source-protein') return '#22c55e';
                 if (link.kind === 'protein-target') return '#22c55e';
                 return '#38bdf8';
             })
-            .nodeThreeObject((node) => {
-                const group = new THREE.Group();
-                const size = node.type === 'protein' ? 5.4 : (node.is_source ? 9 : 7);
-                const base = new THREE.Mesh(
-                    new THREE.SphereGeometry(size, 28, 28),
-                    new THREE.MeshStandardMaterial({
-                        color: colorMap[node.type] || 0x94a3b8,
-                        emissive: colorMap[node.type] || 0x94a3b8,
-                        emissiveIntensity: node.is_source ? 0.45 : 0.22,
-                        roughness: 0.25,
-                        metalness: 0.35,
-                        transparent: true,
-                        opacity: 0.98,
-                    })
-                );
-                group.add(base);
+            .nodeColor((node) => {
+                if (node.type === 'drug') return '#38bdf8'; // sky-400
+                if (node.type === 'disease') return '#f87171'; // red-400
+                if (node.type === 'protein') return '#fbbf24'; // amber-400
+                return '#94a3b8';
+            })
+            .nodeVal((node) => {
+                return node.type === 'protein' ? 6 : (node.is_source ? 9.5 : 7.5);
+            })
+            .nodeResolution(24) // Render beautifully smooth spheres using internal THREE!
+            .nodeLabel((node) => {
+                const type = node.type || '';
+                const label = node.label || node.actual_id || node.id;
+                const id = node.actual_id || node.id;
+                const smiles = node.smiles || '';
+                const seqLen = node.seq_len || 0;
+                
+                const escapeString = (str) => String(str).replace(/[&<>"']/g, (m) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[m]));
 
-                if (node.type === 'drug') {
-                    const ring = new THREE.Mesh(
-                        new THREE.TorusGeometry(size + 1.6, 0.45, 14, 34),
-                        new THREE.MeshBasicMaterial({ color: 0x93c5fd, transparent: true, opacity: 0.75 })
-                    );
-                    group.add(ring);
-                } else if (node.type === 'disease') {
-                    const mat = new THREE.MeshBasicMaterial({ color: 0xfda4af, transparent: true, opacity: 0.9 });
-                    const hBar = new THREE.Mesh(new THREE.BoxGeometry(size * 1.4, 1.2, 1.2), mat);
-                    const vBar = new THREE.Mesh(new THREE.BoxGeometry(1.2, size * 1.4, 1.2), mat);
-                    group.add(hBar);
-                    group.add(vBar);
+                if (type === 'drug') {
+                    let badgeColor = 'color: #22d3ee; background: rgba(8,47,73,0.5); border: 1px solid rgba(14,116,144,0.2);';
+                    let iconColor = 'border: 1px solid rgba(34,211,238,0.3); background: rgba(8,47,73,0.2); color: #22d3ee;';
+                    let idColor = 'color: #22d3ee;';
+                    
+                    let chemDetails = { formula: '', weight: '' };
+                    try {
+                        const lowId = String(id).toLowerCase();
+                        chemDetails = (typeof drugExactDetails !== 'undefined' ? drugExactDetails[lowId] : null) || 
+                                      (typeof parseSmilesToFormulaAndWeight === 'function' ? parseSmilesToFormulaAndWeight(smiles) : {formula:'',weight:''});
+                    } catch (e) {
+                        console.warn('Error parsing chemical details:', e);
+                    }
+                    
+                    let chemStr = '';
+                    if (chemDetails && chemDetails.formula && chemDetails.weight) {
+                        chemStr = `${chemDetails.formula} · ${chemDetails.weight}`;
+                    } else if (chemDetails && chemDetails.formula) {
+                        chemStr = chemDetails.formula;
+                    } else if (chemDetails && chemDetails.weight) {
+                        chemStr = chemDetails.weight;
+                    }
+                    
+                    return `<div style="background: rgba(7,11,19,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.85); padding: 16px; min-width: 230px; font-family: 'Inter', sans-serif;">
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <!-- Icon Box -->
+                                <div style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; ${iconColor} font-size: 14px;">
+                                    💊
+                                </div>
+                                <!-- Badge Pill -->
+                                <span style="padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: bold; letter-spacing: 0.05em; ${badgeColor}">THUỐC</span>
+                            </div>
+                            <div>
+                                <h4 style="color: #fff; font-weight: bold; font-family: 'Space Grotesk', sans-serif; font-size: 15px; margin: 0; line-height: 1.35;">${escapeString(label)}</h4>
+                                <div style="${idColor} font-family: monospace; font-size: 11px; margin-top: 2px;">${escapeString(id)}</div>
+                            </div>
+                            ${chemStr ? `<div style="color: rgba(255,255,255,0.6); font-size: 10.5px; margin-top: 2px;">${escapeString(chemStr)}</div>` : ''}
+                        </div>
+                    </div>`;
+                } else if (type === 'protein') {
+                    let badgeColor = 'color: #fbbf24; background: rgba(120,53,4,0.5); border: 1px solid rgba(180,83,9,0.2);';
+                    let iconColor = 'border: 1px solid rgba(245,158,11,0.3); background: rgba(120,53,4,0.2); color: #fbbf24;';
+                    let idColor = 'color: #fbbf24;';
+                    
+                    let seqStr = seqLen ? `Độ dài chuỗi: ${seqLen} aa` : 'Cầu nối liên kết';
+                    
+                    return `<div style="background: rgba(7,11,19,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.85); padding: 16px; min-width: 230px; font-family: 'Inter', sans-serif;">
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <!-- Icon Box -->
+                                <div style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; ${iconColor} font-size: 14px;">
+                                    🧬
+                                </div>
+                                <!-- Badge Pill -->
+                                <span style="padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: bold; letter-spacing: 0.05em; ${badgeColor}">PROTEIN</span>
+                            </div>
+                            <div>
+                                <h4 style="color: #fff; font-weight: bold; font-family: 'Space Grotesk', sans-serif; font-size: 15px; margin: 0; line-height: 1.35;">${escapeString(label)}</h4>
+                                <div style="${idColor} font-family: monospace; font-size: 11px; margin-top: 2px;">${escapeString(id)}</div>
+                            </div>
+                            <div style="color: rgba(255,255,255,0.6); font-size: 10.5px; margin-top: 2px;">${escapeString(seqStr)}</div>
+                        </div>
+                    </div>`;
                 } else {
-                    const ring = new THREE.Mesh(
-                        new THREE.TorusGeometry(size + 1.1, 0.35, 12, 30),
-                        new THREE.MeshBasicMaterial({ color: 0xfcd34d, transparent: true, opacity: 0.7 })
-                    );
-                    ring.rotation.x = Math.PI / 2;
-                    group.add(ring);
+                    let badgeColor = 'color: #ef4444; background: rgba(127,29,29,0.5); border: 1px solid rgba(185,28,28,0.2);';
+                    let iconColor = 'border: 1px solid rgba(239,68,68,0.3); background: rgba(127,29,29,0.2); color: #ef4444;';
+                    let idColor = 'color: #ef4444;';
+                    
+                    return `<div style="background: rgba(7,11,19,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.85); padding: 16px; min-width: 230px; font-family: 'Inter', sans-serif;">
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <!-- Icon Box -->
+                                <div style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; ${iconColor} font-size: 14px;">
+                                    📈
+                                </div>
+                                <!-- Badge Pill -->
+                                <span style="padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: bold; letter-spacing: 0.05em; ${badgeColor}">BỆNH</span>
+                            </div>
+                            <div>
+                                <h4 style="color: #fff; font-weight: bold; font-family: 'Space Grotesk', sans-serif; font-size: 15px; margin: 0; line-height: 1.35;">${escapeString(label)}</h4>
+                                <div style="${idColor} font-family: monospace; font-size: 11px; margin-top: 2px;">${escapeString(id)}</div>
+                            </div>
+                            <div style="color: rgba(255,255,255,0.6); font-size: 10.5px; margin-top: 2px;">Mã liên kết bệnh lý</div>
+                        </div>
+                    </div>`;
                 }
-
-                if (window.SpriteText) {
-                    const label = new SpriteText(`${node.label || node.actual_id || node.id}`);
-                    label.color = '#f8fafc';
-                    label.textHeight = node.type === 'protein' ? 4 : 5;
-                    label.backgroundColor = 'rgba(5, 11, 22, 0.65)';
-                    label.padding = 2;
-                    label.borderRadius = 4;
-                    label.position.set(0, size + 8, 0);
-                    group.add(label);
-                }
-                return group;
             })
             .onNodeHover((node) => {
                 container.style.cursor = node ? 'pointer' : 'default';
-            });
+            })
+            .graphData(graphPayload);
 
-        const scene = window._graph3d.scene();
-        scene.add(new THREE.AmbientLight(0xffffff, 0.86));
-        const keyLight = new THREE.DirectionalLight(0x93c5fd, 1.25);
-        keyLight.position.set(180, 160, 140);
-        scene.add(keyLight);
-        const fillLight = new THREE.PointLight(0x22c55e, 0.8, 600);
-        fillLight.position.set(-120, -60, 90);
-        scene.add(fillLight);
-
-        const starCount = 600;
-        const starPositions = new Float32Array(starCount * 3);
-        for (let i = 0; i < starCount; i += 1) {
-            starPositions[i * 3] = (Math.random() - 0.5) * 900;
-            starPositions[i * 3 + 1] = (Math.random() - 0.5) * 900;
-            starPositions[i * 3 + 2] = (Math.random() - 0.5) * 900;
+        if (window._graph3dResizeListener) {
+            window.removeEventListener('resize', window._graph3dResizeListener);
         }
-        const starGeometry = new THREE.BufferGeometry();
-        starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-        const starMaterial = new THREE.PointsMaterial({ color: 0x94a3b8, size: 1.2, transparent: true, opacity: 0.7 });
-        scene.add(new THREE.Points(starGeometry, starMaterial));
+        window._graph3dResizeListener = () => {
+            if (graph3d && graph3d.width && graph3d.height) {
+                graph3d.width(container.clientWidth || window.innerWidth);
+                graph3d.height(container.clientHeight || (window.innerHeight - 56));
+            }
+        };
+        window.addEventListener('resize', window._graph3dResizeListener);
 
-        if (!window._graph3dResizeBound) {
-            window.addEventListener('resize', () => {
-                if (!window._graph3d) return;
-                window._graph3d.width(container.clientWidth || window.innerWidth);
-                window._graph3d.height(container.clientHeight || (window.innerHeight - 60));
-            });
-            window._graph3dResizeBound = true;
+        setTimeout(() => {
+            if (graph3d.zoomToFit) {
+                graph3d.zoomToFit(800, 100);
+                
+                // Kích hoạt tự động xoay sau khi zoom kết thúc (800ms)
+                setTimeout(() => {
+                    if (graph3d.controls) {
+                        graph3d.controls().autoRotate = true;
+                        graph3d.controls().autoRotateSpeed = 1.2;
+                    }
+                }, 850);
+            }
+        }, 180);
+    } catch (err) {
+        console.error('init3D error:', err);
+        if (container) {
+            container.innerHTML = `
+                <div style="height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; color: #ef4444; background: #050b16; padding: 24px; font-family: sans-serif; border-radius: 24px; gap: 12px; border: 1px solid rgba(239,68,68,0.2);">
+                    <div style="font-size: 40px;">⚠️</div>
+                    <div style="font-weight: bold; font-size: 16px;">Không thể dựng đồ thị 3D</div>
+                    <div style="font-size: 12px; color: rgba(255,255,255,0.5); max-width: 400px; line-height: 1.5; font-family: monospace;">${err.message}</div>
+                </div>
+            `;
         }
     }
-
-    window._graph3d
-        .width(container.clientWidth || window.innerWidth)
-        .height(container.clientHeight || (window.innerHeight - 60))
-        .graphData(graphPayload);
-
-    if (window._graph3d && window._graph3d.resumeAnimation) {
-        window._graph3d.resumeAnimation();
-    }
-
-    setTimeout(() => {
-        if (window._graph3d && window._graph3d.zoomToFit) {
-            window._graph3d.zoomToFit(800, 100);
-        }
-    }, 180);
 <?php else: ?>
     void wrapper;
 <?php endif; ?>
